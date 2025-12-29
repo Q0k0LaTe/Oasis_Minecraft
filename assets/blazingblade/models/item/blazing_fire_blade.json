@@ -1,0 +1,6 @@
+{
+  "parent": "minecraft:item/generated",
+  "textures": {
+    "layer0": "blazingblade:item/blazing_fire_blade"
+  }
+}
