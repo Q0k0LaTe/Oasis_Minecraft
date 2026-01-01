@@ -33,6 +33,7 @@ FABRIC_API_DEFAULTS = {
     "1.21": "0.102.0+1.21",
     "1.21.1": "0.105.0+1.21.1",
     "1.21.5": "0.128.2+1.21.5",
+    "1.21.11": "0.140.2+1.21.11"
 }
 
 MINECRAFT_VERSION = os.getenv("MINECRAFT_VERSION", DEFAULT_MC_VERSION)
