@@ -76,3 +76,42 @@ CORS_ORIGINS = [
     "http://127.0.0.1:8080",
     "*"  # Allow all origins during development
 ]
+
+# Database Configuration
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_PORT = os.getenv("DB_PORT", "5432")
+DB_NAME = os.getenv("DB_NAME", "minecraft_mod_generator")
+DB_USER = os.getenv("DB_USER", "oasis")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "oasis123")
+
+# Construct database URL for SQLAlchemy
+# Format: postgresql://user:password@host:port/database
+DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+
+# Redis Configuration (for verification codes)
+REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
+REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+REDIS_DB = int(os.getenv("REDIS_DB", "0"))
+REDIS_URL = f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
+
+# Email Configuration (Resend)
+RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
+if not RESEND_API_KEY:
+    raise ValueError("RESEND_API_KEY not found in environment variables")
+
+# Resend 配置
+MAIL_FROM = os.getenv("MAIL_FROM", "onboarding@resend.dev")  # Resend 默认发件地址
+MAIL_FROM_NAME = os.getenv("MAIL_FROM_NAME", "Minecraft Mod Generator")
+
+# 旧的 Gmail SMTP 配置（已弃用，保留作为备份）
+# MAIL_USERNAME = os.getenv("MAIL_USERNAME", "")
+# MAIL_PASSWORD = os.getenv("MAIL_PASSWORD", "")
+# MAIL_PORT = int(os.getenv("MAIL_PORT", "587"))
+# MAIL_SERVER = os.getenv("MAIL_SERVER", "smtp.gmail.com")
+# MAIL_STARTTLS = True
+# MAIL_SSL_TLS = False
+# MAIL_USE_CREDENTIALS = True
+
+# Verification Code Configuration
+VERIFICATION_CODE_EXPIRE_MINUTES = int(os.getenv("VERIFICATION_CODE_EXPIRE_MINUTES", "10"))  # Code expires in 10 minutes
+VERIFICATION_CODE_LENGTH = int(os.getenv("VERIFICATION_CODE_LENGTH", "6"))  # 6-digit code
