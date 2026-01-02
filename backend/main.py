@@ -12,6 +12,7 @@ from models import ItemPromptRequest
 from agents.mod_analyzer import ModAnalyzerAgent
 from agents.mod_generator import ModGenerator
 from agents.image_generator import ImageGenerator
+from auth.router import router as auth_router
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -19,6 +20,9 @@ app = FastAPI(
     description="AI-powered Minecraft Fabric mod generator",
     version="1.0.0"
 )
+
+# Include authentication router
+app.include_router(auth_router)
 
 # Add CORS middleware
 app.add_middleware(
