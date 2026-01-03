@@ -1,14 +1,17 @@
 """
 Image Generator - Creates pixel art textures for Minecraft items using Google Imagen
 """
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from PIL import Image
 from io import BytesIO
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List, Dict
 import numpy as np
+import json
 
 from config import GEMINI_API_KEY, IMAGE_MODEL, IMAGE_SIZE, IMAGE_QUALITY
+from .reference_selector import ReferenceSelector
 
 
 class ImageGenerator:
@@ -35,9 +38,39 @@ class ImageGenerator:
     ]
 
     def __init__(self):
-        # Configure Gemini for image generation
-        genai.configure(api_key=GEMINI_API_KEY)
-        self.model = genai.GenerativeModel(IMAGE_MODEL)
+        # Configure Google Imagen client
+        self.client = genai.Client(api_key=GEMINI_API_KEY)
+        self.model_name = IMAGE_MODEL
+
+        # Initialize reference selector agent
+        self.reference_selector = ReferenceSelector()
+        print("✓ ImageGenerator initialized with AI-powered reference selector")
+
+    def _select_reference_textures(
+        self,
+        item_description: str,
+        item_name: str,
+        max_refs: int = 3,
+        for_block: bool = False
+    ) -> List[Path]:
+        """
+        Use AI agent to select relevant reference textures
+
+        Args:
+            item_description: Description of the item to generate
+            item_name: Name of the item
+            max_refs: Maximum number of reference textures to return
+            for_block: If True, search block textures instead of items
+
+        Returns:
+            List of paths to relevant reference textures
+        """
+        return self.reference_selector.select_references(
+            item_description=item_description,
+            item_name=item_name,
+            for_block=for_block,
+            max_refs=max_refs
+        )
 
     def generate_multiple_item_textures(
         self,
@@ -89,21 +122,39 @@ class ImageGenerator:
 
         print(f"Generating texture for {item_name}...")
 
-        # Generate image using Google Imagen
-        response = self.model.generate_content(
-            prompt,
-            generation_config=genai.types.GenerationConfig(
-                # Imagen configuration
-                response_mime_type="image/png"
-            )
+        # Select reference textures
+        reference_paths = self._select_reference_textures(
+            item_description, item_name, max_refs=2
+        )
+
+        # Build contents list with prompt and reference images
+        contents = [prompt]
+
+        # Add reference images if available
+        if reference_paths:
+            print(f"  Using {len(reference_paths)} reference texture(s)")
+            contents.append("\n\nREFERENCE TEXTURES (use these as style guides):")
+            for ref_path in reference_paths:
+                ref_image = Image.open(ref_path).convert("RGB")
+                contents.append(ref_image)
+        else:
+            print("  No reference textures found, generating from scratch")
+
+        # Generate image using Gemini image generation
+        response = self.client.models.generate_content(
+            model=self.model_name,
+            contents=contents,
         )
 
         # Get the image data
-        if hasattr(response, 'parts') and len(response.parts) > 0:
-            # Extract image data from response
-            image_data = response.parts[0].inline_data.data
-            img = Image.open(BytesIO(image_data))
-        else:
+        img = None
+        for part in response.parts:
+            if part.inline_data:
+                # Convert inline_data bytes to PIL Image
+                img = Image.open(BytesIO(part.inline_data.data))
+                break
+
+        if img is None:
             raise ValueError("No image data in response")
 
         # Convert to 16x16 pixel art (with background removal for items)
@@ -669,19 +720,37 @@ NEGATIVE PROMPTS (avoid):
 
         print(f"Generating texture for {item_name} ({rarity})...")
 
-        # Generate image using Google Imagen
-        response = self.model.generate_content(
-            prompt,
-            generation_config=genai.types.GenerationConfig(
-                response_mime_type="image/png"
-            )
+        # Select reference textures
+        reference_paths = self._select_reference_textures(
+            enhanced_desc, item_name, max_refs=2
+        )
+
+        # Build contents list with prompt and reference images
+        contents = [prompt]
+
+        # Add reference images if available
+        if reference_paths:
+            print(f"  Using {len(reference_paths)} reference texture(s)")
+            contents.append("\n\nREFERENCE TEXTURES (use these as style guides):")
+            for ref_path in reference_paths:
+                ref_image = Image.open(ref_path).convert("RGB")
+                contents.append(ref_image)
+
+        # Generate image using Gemini image generation
+        response = self.client.models.generate_content(
+            model=self.model_name,
+            contents=contents,
         )
 
         # Get the image data
-        if hasattr(response, 'parts') and len(response.parts) > 0:
-            image_data = response.parts[0].inline_data.data
-            img = Image.open(BytesIO(image_data))
-        else:
+        img = None
+        for part in response.parts:
+            if part.inline_data:
+                # Convert inline_data bytes to PIL Image
+                img = Image.open(BytesIO(part.inline_data.data))
+                break
+
+        if img is None:
             raise ValueError("No image data in response")
 
         # Convert to 16x16 pixel art with enhanced processing
@@ -731,19 +800,39 @@ NEGATIVE PROMPTS (avoid):
             luminance=properties.get("luminance"),
         )
 
-        # Generate image using Google Imagen
-        response = self.model.generate_content(
-            prompt,
-            generation_config=genai.types.GenerationConfig(
-                response_mime_type="image/png"
-            )
+        print(f"Generating block texture for {block_name}...")
+
+        # Select reference textures for blocks
+        reference_paths = self._select_reference_textures(
+            description, block_name, max_refs=2, for_block=True
+        )
+
+        # Build contents list with prompt and reference images
+        contents = [prompt]
+
+        # Add reference images if available
+        if reference_paths:
+            print(f"  Using {len(reference_paths)} reference block texture(s)")
+            contents.append("\n\nREFERENCE BLOCK TEXTURES (use these as style guides):")
+            for ref_path in reference_paths:
+                ref_image = Image.open(ref_path).convert("RGB")
+                contents.append(ref_image)
+
+        # Generate image using Gemini image generation
+        response = self.client.models.generate_content(
+            model=self.model_name,
+            contents=contents,
         )
 
         # Get the image data
-        if hasattr(response, 'parts') and len(response.parts) > 0:
-            image_data = response.parts[0].inline_data.data
-            img = Image.open(BytesIO(image_data))
-        else:
+        img = None
+        for part in response.parts:
+            if part.inline_data:
+                # Convert inline_data bytes to PIL Image
+                img = Image.open(BytesIO(part.inline_data.data))
+                break
+
+        if img is None:
             raise ValueError("No image data in response")
 
         pixelated = self._convert_to_pixel_art(img, size=16, for_block=True)
