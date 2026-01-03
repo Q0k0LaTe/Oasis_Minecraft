@@ -1,5 +1,5 @@
 """
-Authentication utilities
+Password utilities
 Password hashing and verification functions
 """
 import bcrypt

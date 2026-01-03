@@ -5,19 +5,18 @@ FastAPI routes for user registration and login
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
 
 from database import get_db, User, UserSession
-from .schemas import (
+from auth.schemas import (
     RegisterRequest, RegisterResponse,
     LoginRequest, LoginResponse,
     UserInfo, SessionInfo,
     SendVerificationCodeRequest, SendVerificationCodeResponse,
     VerifyCodeRequest, VerifyCodeResponse,
 )
-from .utils import hash_password, verify_password
-from .verification import generate_verification_code, store_verification_code, verify_code
-from .email_service import send_verification_code as send_email_verification_code
+from utils.password import hash_password, verify_password
+from auth.verification import generate_verification_code, store_verification_code, check_code, verify_code, normalize_email
+from services.email_service import send_verification_code as send_email_verification_code
 
 router = APIRouter(prefix="/api/auth", tags=["authentication"])
 
@@ -33,8 +32,11 @@ async def send_verification_code_endpoint(
     Generates a 6-digit code, stores it in Redis, and sends it via email.
     Code expires in 10 minutes.
     """
-    # Check if email is already registered
-    existing_user = db.query(User).filter(User.email == request.email).first()
+    # Normalize email for consistent storage and lookup
+    normalized_email = normalize_email(request.email)
+    
+    # Check if email is already registered (use normalized email for comparison)
+    existing_user = db.query(User).filter(User.email == normalized_email).first()
     if existing_user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -44,14 +46,14 @@ async def send_verification_code_endpoint(
     # Generate verification code
     code = generate_verification_code()
     
-    # Store code in Redis
-    if not store_verification_code(request.email, code):
+    # Store code in Redis (normalize_email is called inside store_verification_code)
+    if not store_verification_code(normalized_email, code):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to store verification code"
         )
     
-    # Send email
+    # Send email (use original email for display, but store normalized in Redis)
     email_sent = await send_email_verification_code(request.email, code)
     if not email_sent:
         raise HTTPException(
@@ -73,9 +75,9 @@ async def verify_code_endpoint(
     Verify email verification code
     
     Checks if the provided code matches the stored code for the email.
-    Code is deleted after successful verification (one-time use).
+    Code is NOT deleted here, allowing it to be used again during registration.
     """
-    is_valid = verify_code(request.email, request.code)
+    is_valid = check_code(request.email, request.code)
     
     return VerifyCodeResponse(
         success=True,
@@ -95,8 +97,11 @@ async def register(
     Requires valid verification code before creating account.
     Username and email must be unique.
     """
-    # Verify email verification code first
-    if not verify_code(request.email, request.verification_code):
+    # Normalize email for consistent storage and lookup
+    normalized_email = normalize_email(request.email)
+    
+    # Verify email verification code first (normalize_email is called inside verify_code)
+    if not verify_code(normalized_email, request.verification_code):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired verification code"
@@ -110,8 +115,8 @@ async def register(
             detail="Username already exists"
         )
     
-    # Check if email already exists (double check after verification)
-    existing_email = db.query(User).filter(User.email == request.email).first()
+    # Check if email already exists (double check after verification, use normalized email)
+    existing_email = db.query(User).filter(User.email == normalized_email).first()
     if existing_email:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -121,10 +126,10 @@ async def register(
     # Hash password
     hashed_password = hash_password(request.password)
     
-    # Create new user
+    # Create new user (store normalized email in database)
     new_user = User(
         username=request.username,
-        email=request.email,
+        email=normalized_email,
         password_hash=hashed_password,
         is_active=True
     )
@@ -163,11 +168,12 @@ async def login(
             detail="Either username or email must be provided"
         )
     
-    # Find user by username or email
+    # Find user by username or email (normalize email for consistent lookup)
     if request.username:
         user = db.query(User).filter(User.username == request.username).first()
     else:
-        user = db.query(User).filter(User.email == request.email).first()
+        normalized_email = normalize_email(request.email)
+        user = db.query(User).filter(User.email == normalized_email).first()
     
     if not user:
         raise HTTPException(
