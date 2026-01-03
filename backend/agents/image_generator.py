@@ -6,12 +6,33 @@ from PIL import Image
 from io import BytesIO
 from pathlib import Path
 from typing import Optional
+import numpy as np
 
 from config import GEMINI_API_KEY, IMAGE_MODEL, IMAGE_SIZE, IMAGE_QUALITY
 
 
 class ImageGenerator:
     """Generates pixel art textures for Minecraft items"""
+
+    # Minecraft-inspired color palette (common colors used in vanilla Minecraft textures)
+    MINECRAFT_PALETTE = [
+        # Grays and blacks
+        (0, 0, 0), (64, 64, 64), (127, 127, 127), (191, 191, 191), (255, 255, 255),
+        # Browns and tans (wood, dirt)
+        (92, 58, 30), (120, 85, 60), (150, 110, 77), (180, 140, 100),
+        # Greens (grass, emeralds)
+        (34, 139, 34), (60, 179, 113), (102, 255, 102), (0, 128, 0),
+        # Blues (diamond, water)
+        (92, 219, 213), (79, 193, 255), (0, 0, 255), (30, 144, 255),
+        # Reds and oranges
+        (255, 0, 0), (255, 69, 0), (220, 20, 60), (178, 34, 34),
+        # Purples and magentas
+        (147, 112, 219), (186, 85, 211), (255, 0, 255), (138, 43, 226),
+        # Yellows and golds
+        (255, 215, 0), (255, 255, 0), (255, 200, 124), (218, 165, 32),
+        # Stone colors
+        (112, 112, 112), (128, 128, 128), (96, 96, 96), (80, 80, 80),
+    ]
 
     def __init__(self):
         # Configure Gemini for image generation
@@ -102,27 +123,84 @@ class ImageGenerator:
 
         return png_data
 
-    def _create_pixel_art_prompt(self, item_description: str, item_name: str) -> str:
-        """Create an Imagen prompt optimized for Minecraft-style pixel art"""
+    def _create_pixel_art_prompt(self, item_description: str, item_name: str, rarity: str = "COMMON") -> str:
+        """Create an enhanced Imagen prompt optimized for Minecraft-style pixel art"""
 
-        prompt = f"""Create a pixel art item sprite for Minecraft of: {item_name}
+        # Rarity-based style guidance
+        rarity_styles = {
+            "COMMON": "simple, clean design with 3-5 colors. Matte finish, no special effects.",
+            "UNCOMMON": "slightly more detailed with 4-6 colors. Subtle highlights and depth.",
+            "RARE": "detailed with 5-8 colors. Add shimmer effects, glossy highlights, and rich color depth.",
+            "EPIC": "highly detailed with 6-10 colors. Add glowing accents, particle effects, magical aura, vibrant colors."
+        }
+        style = rarity_styles.get(rarity, rarity_styles["COMMON"])
+
+        # Enhanced color palette guidance
+        color_guide = """
+COLOR PALETTE (use colors similar to these Minecraft standards):
+- Diamond/Cyan: #5CDBD5, #4FC3F7
+- Gold/Yellow: #FFD700, #FFC107
+- Iron/Gray: #C0C0C0, #808080
+- Emerald/Green: #50C878, #3CB371
+- Ruby/Red: #DC143C, #B22222
+- Amethyst/Purple: #9370DB, #BA55D3
+- Netherite/Dark: #4A4A4A, #2C2C2C
+- Wood/Brown: #8B4513, #A0522D"""
+
+        # Specific visual examples based on item type
+        examples = self._get_item_examples(item_name, item_description)
+
+        prompt = f"""Create a professional pixel art item sprite for Minecraft of: {item_name}
 Description: {item_description}
+Rarity: {rarity} - {style}
 
-CRITICAL REQUIREMENTS:
-- Draw the item exactly as it appears in Minecraft's inventory
-- Use a PURE WHITE background (#FFFFFF / RGB 255,255,255) with NO gradients or shadows
-- Center the {item_name} sprite with generous white margins on all sides
-- The sprite itself should have bold black or dark outlines separating it from the white background
-- Use 4-8 solid colors maximum (no gradients within the item)
-- Minecraft's iconic style: sharp pixels, flat colors, simple geometric shapes
-- Think diamond sword (bright blue blade, brown handle), golden apple (yellow with green leaf spot), or ruby gem (deep red crystal with dark facets)
-- The item should be clearly separated from the white background by its outline
-- Scale appropriately for 16x16 pixels - keep it simple and recognizable
-- DO NOT place pure white pixels inside the item sprite—reserve white exclusively for the background so it can be keyed out later
+{color_guide}
 
-The white background should be completely uniform and only surround the item - do not put white pixels inside the item's outline."""
+VISUAL STYLE REQUIREMENTS:
+- Pure Minecraft aesthetic: sharp pixels, NO anti-aliasing, NO blurriness
+- Flat geometric shapes with clear pixel boundaries
+- {style}
+- Reference style: {examples}
+- Use bold outlines (black or very dark color) to define the item's shape
+- Add depth with 2-3 shades of each base color (light, medium, dark)
+- Keep design simple enough to read clearly at 16x16 pixels
+
+TECHNICAL REQUIREMENTS:
+- PURE WHITE background (#FFFFFF / RGB 255,255,255) ONLY
+- NO gradients, NO soft shadows on the background
+- Center the sprite with generous white margins (at least 20% padding)
+- The item sprite MUST have clear dark outlines separating it from white background
+- NO white pixels inside the item outline - use off-white (#F0F0F0 or darker) if needed
+- Item should occupy roughly 60-70% of the canvas for good scaling
+
+NEGATIVE PROMPTS (DO NOT include these):
+- No 3D rendering or smooth shading
+- No realistic textures or photographs
+- No blurry edges or anti-aliasing
+- No gradients spanning multiple pixels
+- No hands, UI elements, or text
+- No white highlights inside the sprite (use light gray/color instead)"""
 
         return prompt
+
+    def _get_item_examples(self, item_name: str, description: str) -> str:
+        """Generate contextual examples based on item type"""
+        text = f"{item_name} {description}".lower()
+
+        if any(word in text for word in ["gem", "crystal", "shard", "stone"]):
+            return "diamond (bright cyan geometric gem), emerald (green crystal), ruby (red faceted gem)"
+        elif any(word in text for word in ["sword", "blade", "dagger"]):
+            return "diamond sword (cyan blade with brown handle), netherite sword (dark blade)"
+        elif any(word in text for word in ["pickaxe", "axe", "tool"]):
+            return "diamond pickaxe (cyan head with brown stick), iron pickaxe (gray head)"
+        elif any(word in text for word in ["apple", "food", "fruit"]):
+            return "golden apple (yellow with green leaf), regular apple (red with brown stem)"
+        elif any(word in text for word in ["ingot", "bar", "metal"]):
+            return "gold ingot (yellow rectangular bar with bevel), iron ingot (gray rectangular)"
+        elif any(word in text for word in ["potion", "bottle"]):
+            return "potion bottle (glass container with colored liquid inside)"
+        else:
+            return "diamond (geometric gem), golden apple (simple fruit), iron sword (weapon with handle)"
 
     def _create_block_prompt(
         self,
@@ -132,31 +210,61 @@ The white background should be completely uniform and only surround the item - d
         material: str = "",
         luminance: Optional[int] = None
     ) -> str:
-        """Prompt tailored for seamless Minecraft block textures."""
-        material_line = f"Material inspiration: {material}." if material else ""
-        luminance_line = ""
-        if luminance is not None and luminance > 0:
-            luminance_line = "Add subtle glow/emission effects."
+        """Enhanced prompt for seamless Minecraft block textures"""
+        material_guide = {
+            "STONE": "gray base with subtle darker speckles and cracks, similar to cobblestone",
+            "METAL": "metallic with horizontal/vertical panel lines, reflective highlights",
+            "WOOD": "grain patterns running vertically or horizontally, warm brown tones",
+            "GLASS": "semi-transparent look with light reflections, clean edges",
+            "PLANT": "organic green tones with texture variation, natural patterns",
+            "SAND": "grainy texture with warm beige tones, subtle noise",
+            "DEEPSLATE": "dark gray with directional cracks and subtle blue-gray tint",
+        }
+        material_hint = material_guide.get(material, "textured surface with depth")
 
-        prompt = f"""Create a seamless tileable 16x16 Minecraft block texture for: {block_name}
+        luminance_effects = ""
+        if luminance and luminance > 0:
+            glow_intensity = "subtle" if luminance < 8 else "bright"
+            luminance_effects = f"Add {glow_intensity} glowing effects - brighter center fading to edges."
+
+        prompt = f"""Create a professional seamless tileable Minecraft block texture for: {block_name}
 Description: {description}
-Gameplay role: {gameplay_role}
-{material_line}
+Purpose: {gameplay_role}
+Material style: {material_hint}
 
-CRITICAL REQUIREMENTS:
-- Full 16x16 pixel square texture (NO transparency, NO alpha channel, NO background)
-- The texture must tile seamlessly on all edges (left connects to right, top connects to bottom)
-- Use Minecraft's blocky pixel art style with 4-8 solid colors
-- Add subtle shading/depth but keep edges tileable
-- Think of vanilla blocks: stone (gray with noise), iron ore (stone with brown-orange spots), diamond ore (stone with cyan crystals)
-- {luminance_line if luminance_line else 'Subtle lighting variations to show depth'}
-- NO hands, UI, or 3D perspective - just a flat tileable texture face
-- Keep border pixels compatible for seamless tiling"""
+VISUAL REQUIREMENTS:
+- Pure Minecraft block aesthetic: 16x16 pixel art, sharp pixels, NO blur
+- Texture MUST tile seamlessly: edges must connect perfectly when repeated
+- Style: {material_hint}
+- Use 4-8 solid colors with clear pixel boundaries
+- Add depth with subtle shading (light source from top-left)
+- {luminance_effects if luminance_effects else 'Natural lighting with subtle shadows'}
+
+REFERENCE EXAMPLES:
+- Stone blocks: gray base (#808080) with darker cracks (#505050) and lighter spots (#A0A0A0)
+- Ore blocks: stone texture with embedded colored crystals (cyan, gold, emerald)
+- Wood planks: parallel grain lines with 3-tone brown palette
+- Metal blocks: panel grid pattern with highlights and shadows
+
+TECHNICAL REQUIREMENTS:
+- Full 16x16 pixel square, completely opaque (NO transparency)
+- Edges must tile: top connects to bottom, left connects to right
+- NO 3D perspective, NO depth blur, NO shadows cast outside the tile
+- Flat top-down view of the block surface texture
+- Border pixels must match opposite side for seamless tiling
+
+NEGATIVE PROMPTS (avoid):
+- No hands, tools, or 3D rendered blocks
+- No UI elements or text
+- No anti-aliasing or gradient blur
+- No photos or realistic textures
+- No shadows extending beyond the 16x16 boundary"""
+
         return prompt
 
     def _convert_to_pixel_art(self, img: Image.Image, size: int = 16, for_block: bool = False) -> Image.Image:
         """
-        Convert a high-res image to pixel art with smart background removal
+        Convert a high-res image to pixel art with enhanced Minecraft-style processing
 
         Args:
             img: PIL Image
@@ -164,7 +272,7 @@ CRITICAL REQUIREMENTS:
             for_block: If True, keep opaque (no transparency) for tileable blocks
 
         Returns:
-            Pixelated PIL Image
+            Enhanced pixelated PIL Image
         """
         # Ensure we're working with RGBA
         if img.mode != 'RGBA':
@@ -172,34 +280,36 @@ CRITICAL REQUIREMENTS:
 
         if for_block:
             # Blocks: keep full 16x16 opaque, no background removal
-            small = img.resize((size, size), Image.Resampling.NEAREST)
-            quantized = small.quantize(colors=32).convert('RGB')
+            # Use 2-stage downsampling for better quality
+            intermediate_size = size * 2
+            medium = img.resize((intermediate_size, intermediate_size), Image.Resampling.LANCZOS)
+            small = medium.resize((size, size), Image.Resampling.NEAREST)
+
+            # Apply Minecraft color palette
+            quantized = self._quantize_to_minecraft_palette(small, for_block=True)
             return quantized
         else:
-            # Items/Tools: remove peripheral white background only
+            # Items/Tools: enhanced processing pipeline
+            # 1. Remove peripheral white background
             img = self._remove_edge_background(img)
             img = self._replace_white_background_with_transparency(img)
-        img = self._auto_crop_and_pad(img, target_px=size * 4)
 
-            # Resize to target size
-        small = img.resize((size, size), Image.Resampling.NEAREST)
-        small = self._replace_white_background_with_transparency(small)
+            # 2. Auto-crop and pad with consistent margins
+            img = self._auto_crop_and_pad(img, target_px=size * 4)
 
-        # Separate alpha channel before quantization
-        alpha = small.split()[3] if small.mode == 'RGBA' else None
+            # 3. Two-stage downsampling for better pixel art quality
+            intermediate_size = size * 2
+            medium = img.resize((intermediate_size, intermediate_size), Image.Resampling.LANCZOS)
+            small = medium.resize((size, size), Image.Resampling.NEAREST)
 
-        # Quantize only the RGB channels
-        if alpha:
-            rgb = small.convert('RGB')
-            quantized_rgb = rgb.quantize(colors=64).convert('RGB')
-            result = quantized_rgb.copy()
-            result.putalpha(alpha)
-        else:
-            quantized = small.quantize(colors=64)
-            result = quantized.convert('RGBA')
+            # 4. Final white background cleanup
+            small = self._replace_white_background_with_transparency(small)
 
-            # Clean up semi-transparent edge pixels
-        result = self._clean_edges(result)
+            # 5. Apply Minecraft color palette quantization
+            result = self._quantize_to_minecraft_palette(small, for_block=False)
+
+            # 6. Enhanced edge cleanup
+            result = self._enhanced_edge_cleanup(result)
 
         return result
 
@@ -416,6 +526,120 @@ CRITICAL REQUIREMENTS:
 
         return canvas
 
+    def _quantize_to_minecraft_palette(self, img: Image.Image, for_block: bool = False) -> Image.Image:
+        """
+        Quantize image colors to Minecraft-inspired palette for authentic look
+
+        Args:
+            img: PIL Image to quantize
+            for_block: If True, return RGB; if False, preserve alpha channel
+
+        Returns:
+            Image with colors mapped to Minecraft palette
+        """
+        # Convert to numpy for faster processing
+        if img.mode == 'RGBA':
+            img_array = np.array(img)
+            alpha = img_array[:, :, 3]
+            rgb = img_array[:, :, :3]
+        else:
+            img_array = np.array(img.convert('RGB'))
+            alpha = None
+            rgb = img_array
+
+        # Flatten for processing
+        original_shape = rgb.shape
+        pixels = rgb.reshape(-1, 3)
+
+        # Map each pixel to nearest Minecraft palette color
+        palette_array = np.array(self.MINECRAFT_PALETTE)
+        quantized = np.zeros_like(pixels)
+
+        for i, pixel in enumerate(pixels):
+            # Skip transparent pixels
+            if alpha is not None and i < len(alpha.flatten()) and alpha.flatten()[i] < 10:
+                quantized[i] = pixel
+                continue
+
+            # Find nearest color in Minecraft palette using Euclidean distance
+            distances = np.sqrt(np.sum((palette_array - pixel) ** 2, axis=1))
+            nearest_idx = np.argmin(distances)
+            quantized[i] = palette_array[nearest_idx]
+
+        # Reshape back to image
+        quantized = quantized.reshape(original_shape).astype(np.uint8)
+
+        # Create result image
+        if for_block:
+            result = Image.fromarray(quantized, 'RGB')
+        else:
+            result_array = np.dstack([quantized, alpha]) if alpha is not None else quantized
+            result = Image.fromarray(result_array.astype(np.uint8), 'RGBA' if alpha is not None else 'RGB')
+
+        return result
+
+    def _enhanced_edge_cleanup(self, img: Image.Image) -> Image.Image:
+        """
+        Enhanced edge cleanup for crisp pixel art with better anti-aliasing removal
+
+        Args:
+            img: PIL Image in RGBA mode
+
+        Returns:
+            Image with cleaned, crisp edges
+        """
+        if img.mode != 'RGBA':
+            return img
+
+        img_array = np.array(img)
+        height, width = img_array.shape[:2]
+
+        # Create output array
+        cleaned = img_array.copy()
+
+        for y in range(height):
+            for x in range(width):
+                r, g, b, a = img_array[y, x]
+
+                # Fully transparent pixels - leave as is
+                if a < 10:
+                    continue
+
+                # Fully opaque pixels - leave as is
+                if a > 245:
+                    continue
+
+                # Semi-transparent pixels (potential anti-aliasing artifacts)
+                # Check if surrounded by transparent pixels
+                neighbors_transparent = 0
+                neighbors_opaque = 0
+
+                for dy in [-1, 0, 1]:
+                    for dx in [-1, 0, 1]:
+                        if dx == 0 and dy == 0:
+                            continue
+                        ny, nx = y + dy, x + dx
+                        if 0 <= ny < height and 0 <= nx < width:
+                            neighbor_alpha = img_array[ny, nx, 3]
+                            if neighbor_alpha < 10:
+                                neighbors_transparent += 1
+                            elif neighbor_alpha > 245:
+                                neighbors_opaque += 1
+
+                # If mostly surrounded by transparent, make fully transparent
+                if neighbors_transparent >= 5:
+                    cleaned[y, x] = [0, 0, 0, 0]
+                # If mostly surrounded by opaque, make fully opaque
+                elif neighbors_opaque >= 5:
+                    cleaned[y, x, 3] = 255
+                # Otherwise, threshold to opaque or transparent
+                elif a < 128:
+                    cleaned[y, x] = [0, 0, 0, 0]
+                else:
+                    cleaned[y, x, 3] = 255
+
+        return Image.fromarray(cleaned, 'RGBA')
+
     def generate_texture_from_spec(self, spec: dict) -> bytes:
         """
         Generate texture from mod specification
@@ -440,7 +664,33 @@ CRITICAL REQUIREMENTS:
         if fireproof:
             enhanced_desc += " (fire-resistant, glowing with heat)"
 
-        return self.generate_item_texture(enhanced_desc, item_name)
+        # Generate with rarity-aware prompt
+        prompt = self._create_pixel_art_prompt(enhanced_desc, item_name, rarity)
+
+        print(f"Generating texture for {item_name} ({rarity})...")
+
+        # Generate image using Google Imagen
+        response = self.model.generate_content(
+            prompt,
+            generation_config=genai.types.GenerationConfig(
+                response_mime_type="image/png"
+            )
+        )
+
+        # Get the image data
+        if hasattr(response, 'parts') and len(response.parts) > 0:
+            image_data = response.parts[0].inline_data.data
+            img = Image.open(BytesIO(image_data))
+        else:
+            raise ValueError("No image data in response")
+
+        # Convert to 16x16 pixel art with enhanced processing
+        pixelated = self._convert_to_pixel_art(img, size=16, for_block=False)
+
+        # Save to BytesIO
+        output = BytesIO()
+        pixelated.save(output, format='PNG')
+        return output.getvalue()
 
     def generate_multiple_block_textures(self, block_spec: dict, count: int = 5) -> list[bytes]:
         """
