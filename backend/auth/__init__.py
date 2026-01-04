@@ -1,7 +1,7 @@
 """
 Authentication package
+Schemas and verification utilities for authentication
 """
-from .utils import hash_password, verify_password
 from .schemas import (
     RegisterRequest,
     RegisterResponse,
@@ -9,16 +9,22 @@ from .schemas import (
     LoginResponse,
     UserInfo,
     SessionInfo,
+    SendVerificationCodeRequest,
+    SendVerificationCodeResponse,
+    VerifyCodeRequest,
+    VerifyCodeResponse,
 )
 
 __all__ = [
-    "hash_password",
-    "verify_password",
     "RegisterRequest",
     "RegisterResponse",
     "LoginRequest",
     "LoginResponse",
     "UserInfo",
     "SessionInfo",
+    "SendVerificationCodeRequest",
+    "SendVerificationCodeResponse",
+    "VerifyCodeRequest",
+    "VerifyCodeResponse",
 ]
 

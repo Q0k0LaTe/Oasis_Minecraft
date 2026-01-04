@@ -9,7 +9,7 @@ from config import (
     MAIL_FROM_NAME,
 )
 
-# 设置 Resend API Key
+# Set Resend API Key
 resend.api_key = RESEND_API_KEY
 
 
@@ -30,7 +30,7 @@ async def send_verification_code(email: str, code: str) -> bool:
         - Handles errors gracefully
     """
     try:
-        # 构建 HTML 邮件内容
+        # Build HTML email content
         html_content = f"""
         <html>
         <body style="font-family: Arial, sans-serif; padding: 20px; background-color: #f5f5f5;">
@@ -51,7 +51,7 @@ async def send_verification_code(email: str, code: str) -> bool:
         </html>
         """
         
-        # 发送邮件
+        # Send email
         params = {
             "from": f"{MAIL_FROM_NAME} <{MAIL_FROM}>",
             "to": [email],
@@ -61,8 +61,8 @@ async def send_verification_code(email: str, code: str) -> bool:
         
         result = resend.Emails.send(params)
         
-        # Resend 返回的 result 包含 id 字段表示成功
-        # result 可能是字典或对象
+        # Resend returns result with id field on success
+        # result can be dict or object
         if result:
             email_id = result.get('id') if isinstance(result, dict) else getattr(result, 'id', None)
             if email_id:
@@ -75,3 +75,4 @@ async def send_verification_code(email: str, code: str) -> bool:
     except Exception as e:
         print(f"❌ Error sending verification email to {email}: {e}")
         return False
+

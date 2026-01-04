@@ -43,6 +43,7 @@ backend/venv/
 .env
 .env.local
 .env.*.local
+!.env.example
 
 # Logs
 *.log
