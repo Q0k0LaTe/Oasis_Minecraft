@@ -69,26 +69,27 @@
 - [ ] Update documentation
 - [ ] Update README with new architecture
 
-## 📊 Progress: 30%
+## 📊 Progress: 75%
 
 - **Schemas**: 100% ✅
-- **Core Components**: 12.5% (1/8 complete)
-- **Tools**: 0%
+- **Core Components**: 100% ✅ (8/8 complete)
+- **Tools**: 50% (moved to new structure)
 - **Integration**: 0%
 
 ## 🎯 Current Focus
 
-**Creating the Compiler** - This is the most critical component that transforms human intent (Spec) into a complete, deterministic blueprint (IR).
+**Phase 2 Complete!** All core pipeline components are now implemented:
 
-The Compiler must:
-1. Fill in all optional/missing fields
-2. Generate registry IDs from display names
-3. Resolve version constraints
-4. Create asset manifests
-5. Validate compatibility
-6. Fail loudly on invalid specs
+✅ Orchestrator - Conversation → Spec Delta
+✅ Spec Manager - Canonical spec with versioning
+✅ Compiler - Spec → Complete IR (most critical!)
+✅ Planner - IR → Task DAG
+✅ Executor - Runs task DAG
+✅ Validator - Pre-build validation
+✅ Builder - Gradle compilation
+✅ Error Fixer - Deterministic error fixing
 
-Once Compiler is done, the rest of the pipeline becomes much simpler because everything downstream works with complete, unambiguous data.
+**Next**: Create Tool Registry and Main Pipeline Orchestrator
 
 ## 🔑 Key Architecture Principles Being Followed
 
