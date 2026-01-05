@@ -61,10 +61,11 @@ RESOURCE_PACK_FORMAT = int(os.getenv("RESOURCE_PACK_FORMAT", "34"))
 AI_MODEL = "gemini-2.0-flash-exp"  # Gemini model for text generation
 AI_TEMPERATURE = 0.7
 
-# Image Generation - Using Google Imagen
-IMAGE_MODEL = "imagen-3.0-generate-001"  # Google Imagen for texture generation
+# Image Generation - Using Gemini 3 Pro Image Preview
+IMAGE_MODEL = "gemini-3-pro-image-preview"  # Gemini 3 Pro for texture generation with reference guidance
 IMAGE_SIZE = "1024x1024"  # Will be resized to 16x16
 IMAGE_QUALITY = "standard"  # standard or hd
+IMAGE_VARIANT_COUNT = 5  # Number of texture variants to generate for user selection
 
 # Server Configuration
 HOST = "0.0.0.0"

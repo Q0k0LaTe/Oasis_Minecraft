@@ -89,6 +89,12 @@
 ✅ Builder - Gradle compilation
 ✅ Error Fixer - Deterministic error fixing
 
+**Tools Enhancement Complete:**
+✅ Image generation updated to use `gemini-3-pro-image-preview`
+✅ 5-variant generation workflow implemented for user selection
+✅ Reference selection integrated (GPT-4o-mini → 3 vanilla textures)
+✅ Complete texture generation workflow documented
+
 **Next**: Create Tool Registry and Main Pipeline Orchestrator
 
 ## 🔑 Key Architecture Principles Being Followed
