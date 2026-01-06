@@ -22,7 +22,7 @@ from config import (
     JAVA_VERSION,
     RESOURCE_PACK_FORMAT
 )
-from agents.image_generator import ImageGenerator
+from agents.tools.image_generator import ImageGenerator
 
 
 class ModGenerator:

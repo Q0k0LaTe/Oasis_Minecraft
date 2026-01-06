@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 import hashlib
+from pydantic import BaseModel
 
 from agents.schemas import ModSpec, SpecDelta
 

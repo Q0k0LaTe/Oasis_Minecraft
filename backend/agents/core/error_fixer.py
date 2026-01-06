@@ -13,6 +13,7 @@ We fix the IR or workspace, not regenerate everything.
 import re
 from typing import List, Dict, Any, Optional
 from pathlib import Path
+from pydantic import BaseModel, Field
 
 from agents.schemas import ModIR, SpecDelta
 

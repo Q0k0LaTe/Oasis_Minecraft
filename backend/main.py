@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import HOST, PORT, CORS_ORIGINS
-from routers import auth, jobs, sessions
+from routers import auth, jobs, jobs_v2, sessions
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -26,6 +26,7 @@ app.add_middleware(
 # Include routers
 app.include_router(auth.router)
 app.include_router(jobs.router)
+app.include_router(jobs_v2.router)  # New pipeline-based API (V2)
 app.include_router(sessions.router)
 
 
@@ -38,6 +39,7 @@ async def root():
         "endpoints": {
             "auth": "/api/auth",
             "jobs": "/api/generate-mod",
+            "jobs_v2": "/api/v2/generate",
             "sessions": "/api/sessions"
         }
     }
