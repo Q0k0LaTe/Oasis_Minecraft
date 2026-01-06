@@ -939,3 +939,28 @@ NEGATIVE PROMPTS (avoid):
             item_name=name,
             count=count
         )
+
+    # Backward compatibility aliases for V1 API
+    def generate_multiple_item_textures(
+        self,
+        item_description: str,
+        item_name: str,
+        count: int = 5
+    ) -> List[bytes]:
+        """
+        Backward compatibility wrapper for V1 API.
+        Calls generate_item_texture with the same parameters.
+
+        Args:
+            item_description: Description of the item
+            item_name: Name of the item
+            count: Number of variants to generate
+
+        Returns:
+            List of PNG image data as bytes (16x16 pixels)
+        """
+        return self.generate_item_texture(
+            item_description=item_description,
+            item_name=item_name,
+            count=count
+        )
