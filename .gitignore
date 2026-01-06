@@ -102,3 +102,12 @@ Desktop.ini
 *_key.txt
 secrets/
 credentials/
+
+# Internal documentation (keep local only)
+TEXTURE_GENERATION_WORKFLOW.md
+IMPLEMENTATION_SUMMARY.md
+WORKFLOW_DESIGN.md
+AGENT_RESTRUCTURE_STATUS.md
+ALL_TASKS_COMPLETE.md
+AGENT_RESTRUCTURE_PLAN.md
+RESTRUCTURE_COMPLETE.md
