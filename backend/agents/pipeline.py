@@ -119,9 +119,20 @@ class ModGenerationPipeline:
 
             # Phase 2: SpecManager - Apply deltas and get current spec
             log("Phase 2: Applying deltas to mod specification...")
+
+            # Initialize spec if this is a new mod
+            existing_spec = self.spec_manager.get_current_spec()
+            if existing_spec is None:
+                from agents.schemas import ModSpec
+                log("Initializing new mod specification...")
+                base_spec = ModSpec(mod_name="New Mod")
+                self.spec_manager.initialize_spec(base_spec)
+
+            # Apply all deltas
             current_spec = None
             for spec_delta in orchestrator_response.deltas:
                 current_spec = self.spec_manager.apply_delta(spec_delta)
+
             log(f"✓ Current spec version: {current_spec.version}")
             log(f"  - Mod: {current_spec.mod_name} (v{current_spec.version})")
             log(f"  - Items: {len(current_spec.items)}, Blocks: {len(current_spec.blocks)}")

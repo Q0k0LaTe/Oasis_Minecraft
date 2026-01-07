@@ -79,7 +79,7 @@ class SpecManager:
             return self.load_current_spec()
         return self._current_spec
 
-    def apply_delta(self, delta: SpecDelta) -> str:
+    def apply_delta(self, delta: SpecDelta) -> ModSpec:
         """
         Apply a delta to the current spec
 
@@ -87,7 +87,7 @@ class SpecManager:
             delta: Spec delta to apply
 
         Returns:
-            New version ID
+            Updated ModSpec
 
         Raises:
             ValueError: If delta cannot be applied
@@ -105,7 +105,7 @@ class SpecManager:
         self._current_spec = new_spec
         version_id = self._save_version(delta, f"{delta.operation} at {delta.path}")
 
-        return version_id
+        return self._current_spec
 
     def _apply_delta_to_spec(self, spec: ModSpec, delta: SpecDelta) -> ModSpec:
         """
