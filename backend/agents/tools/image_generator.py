@@ -10,7 +10,7 @@ from typing import Optional, List, Dict
 import numpy as np
 import json
 
-from config import GEMINI_API_KEY, IMAGE_MODEL, IMAGE_SIZE, IMAGE_QUALITY
+from config import GEMINI_API_KEY, IMAGE_MODEL, IMAGE_SIZE, IMAGE_QUALITY, IMAGE_VARIANT_COUNT
 from .reference_selector import ReferenceSelector
 
 
@@ -72,47 +72,63 @@ class ImageGenerator:
             max_refs=max_refs
         )
 
-    def generate_multiple_item_textures(
-        self,
-        item_description: str,
-        item_name: str,
-        count: int = 5
-    ) -> list[bytes]:
-        """
-        Generate multiple pixel art texture variants for a Minecraft item
-
-        Args:
-            item_description: Description of the item
-            item_name: Name of the item
-            count: Number of variants to generate
-
-        Returns:
-            List of PNG image data as bytes (16x16 pixels)
-        """
-        textures = []
-        for i in range(count):
-            texture = self.generate_item_texture(
-                item_description=item_description,
-                item_name=item_name,
-                save_path=None
-            )
-            textures.append(texture)
-            print(f"Generated variant {i+1}/{count} for {item_name}")
-        return textures
-
     def generate_item_texture(
         self,
         item_description: str,
         item_name: str,
+        count: int = None,
         save_path: Path = None
-    ) -> bytes:
+    ) -> List[bytes]:
         """
-        Generate a pixel art texture for a Minecraft item
+        Generate multiple pixel art texture variants for a Minecraft item
+
+        This is the main method that generates IMAGE_VARIANT_COUNT (default: 5) variants
+        for user selection.
 
         Args:
             item_description: Description of the item
             item_name: Name of the item
-            save_path: Optional path to save the image
+            count: Number of variants to generate (defaults to IMAGE_VARIANT_COUNT)
+            save_path: Optional directory to save variants (saved as {name}_variant_1.png, etc.)
+
+        Returns:
+            List of PNG image data as bytes (16x16 pixels), one per variant
+        """
+        if count is None:
+            count = IMAGE_VARIANT_COUNT
+
+        print(f"\n🎨 Generating {count} texture variants for: {item_name}")
+
+        textures = []
+        for i in range(count):
+            print(f"  [{i+1}/{count}] Generating variant {i+1}...")
+            texture = self._generate_single_item_texture(
+                item_description=item_description,
+                item_name=item_name,
+                variant_number=i+1,
+                save_path=save_path
+            )
+            textures.append(texture)
+            print(f"  ✓ Variant {i+1} complete")
+
+        print(f"✓ Generated {count} variants successfully\n")
+        return textures
+
+    def _generate_single_item_texture(
+        self,
+        item_description: str,
+        item_name: str,
+        variant_number: int = 1,
+        save_path: Path = None
+    ) -> bytes:
+        """
+        Generate a single pixel art texture variant for a Minecraft item
+
+        Args:
+            item_description: Description of the item
+            item_name: Name of the item
+            variant_number: Which variant this is (for file naming)
+            save_path: Optional directory to save the image (will append variant number)
 
         Returns:
             PNG image data as bytes (16x16 pixels)
@@ -120,27 +136,25 @@ class ImageGenerator:
         # Create a detailed prompt for pixel art generation
         prompt = self._create_pixel_art_prompt(item_description, item_name)
 
-        print(f"Generating texture for {item_name}...")
-
-        # Select reference textures
-        reference_paths = self._select_reference_textures(
-            item_description, item_name, max_refs=2
-        )
+        # Select reference textures (only once for first variant to save API calls)
+        reference_paths = []
+        if variant_number == 1:
+            reference_paths = self._select_reference_textures(
+                item_description, item_name, max_refs=3
+            )
 
         # Build contents list with prompt and reference images
         contents = [prompt]
 
         # Add reference images if available
         if reference_paths:
-            print(f"  Using {len(reference_paths)} reference texture(s)")
+            print(f"    Using {len(reference_paths)} reference texture(s) as style guides")
             contents.append("\n\nREFERENCE TEXTURES (use these as style guides):")
             for ref_path in reference_paths:
                 ref_image = Image.open(ref_path).convert("RGB")
                 contents.append(ref_image)
-        else:
-            print("  No reference textures found, generating from scratch")
 
-        # Generate image using Gemini image generation
+        # Generate image using Gemini 3 Pro image generation
         response = self.client.models.generate_content(
             model=self.model_name,
             contents=contents,
@@ -165,12 +179,19 @@ class ImageGenerator:
         pixelated.save(output, format='PNG')
         png_data = output.getvalue()
 
-        # Optionally save to file
+        # Optionally save to file with variant number
         if save_path:
-            save_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(save_path, 'wb') as f:
+            if save_path.is_dir():
+                # If directory, create file with variant number
+                file_path = save_path / f"{item_name}_variant_{variant_number}.png"
+            else:
+                # If file path, append variant number before extension
+                file_path = save_path.parent / f"{save_path.stem}_variant_{variant_number}{save_path.suffix}"
+
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(file_path, 'wb') as f:
                 f.write(png_data)
-            print(f"Texture saved to {save_path}")
+            print(f"    Saved to {file_path.name}")
 
         return png_data
 
@@ -783,14 +804,60 @@ NEGATIVE PROMPTS (avoid):
             print(f"Generated tool variant {i+1}/{count}")
         return textures
 
-    def generate_block_texture_from_spec(self, block_spec: dict, save_path: Path = None) -> bytes:
+    def generate_block_texture_from_spec(
+        self,
+        block_spec: dict,
+        count: int = None,
+        save_path: Path = None
+    ) -> List[bytes]:
         """
-        Generate a seamless block texture using LangChain block metadata.
+        Generate multiple seamless block texture variants using block metadata.
+
+        Args:
+            block_spec: Block specification dictionary
+            count: Number of variants to generate (defaults to IMAGE_VARIANT_COUNT)
+            save_path: Optional directory to save variants
+
+        Returns:
+            List of PNG image data as bytes (16x16 pixels), one per variant
         """
+        if count is None:
+            count = IMAGE_VARIANT_COUNT
+
         block_name = block_spec.get("blockName", "Mystery Block")
         description = block_spec.get("description", "")
         gameplay = block_spec.get("gameplayRole", "")
         properties = block_spec.get("properties", {})
+
+        print(f"\n🧱 Generating {count} block texture variants for: {block_name}")
+
+        textures = []
+        for i in range(count):
+            print(f"  [{i+1}/{count}] Generating variant {i+1}...")
+            texture = self._generate_single_block_texture(
+                block_name=block_name,
+                description=description,
+                gameplay=gameplay,
+                properties=properties,
+                variant_number=i+1,
+                save_path=save_path
+            )
+            textures.append(texture)
+            print(f"  ✓ Variant {i+1} complete")
+
+        print(f"✓ Generated {count} block variants successfully\n")
+        return textures
+
+    def _generate_single_block_texture(
+        self,
+        block_name: str,
+        description: str,
+        gameplay: str,
+        properties: dict,
+        variant_number: int = 1,
+        save_path: Path = None
+    ) -> bytes:
+        """Generate a single seamless block texture variant"""
 
         prompt = self._create_block_prompt(
             block_name=block_name,
@@ -800,25 +867,25 @@ NEGATIVE PROMPTS (avoid):
             luminance=properties.get("luminance"),
         )
 
-        print(f"Generating block texture for {block_name}...")
-
-        # Select reference textures for blocks
-        reference_paths = self._select_reference_textures(
-            description, block_name, max_refs=2, for_block=True
-        )
+        # Select reference textures (only once for first variant)
+        reference_paths = []
+        if variant_number == 1:
+            reference_paths = self._select_reference_textures(
+                description, block_name, max_refs=3, for_block=True
+            )
 
         # Build contents list with prompt and reference images
         contents = [prompt]
 
         # Add reference images if available
         if reference_paths:
-            print(f"  Using {len(reference_paths)} reference block texture(s)")
+            print(f"    Using {len(reference_paths)} reference block texture(s) as style guides")
             contents.append("\n\nREFERENCE BLOCK TEXTURES (use these as style guides):")
             for ref_path in reference_paths:
                 ref_image = Image.open(ref_path).convert("RGB")
                 contents.append(ref_image)
 
-        # Generate image using Gemini image generation
+        # Generate image using Gemini 3 Pro image generation
         response = self.client.models.generate_content(
             model=self.model_name,
             contents=contents,
@@ -828,7 +895,6 @@ NEGATIVE PROMPTS (avoid):
         img = None
         for part in response.parts:
             if part.inline_data:
-                # Convert inline_data bytes to PIL Image
                 img = Image.open(BytesIO(part.inline_data.data))
                 break
 
@@ -841,19 +907,60 @@ NEGATIVE PROMPTS (avoid):
         pixelated.save(output, format='PNG')
         png_data = output.getvalue()
 
+        # Optionally save to file with variant number
         if save_path:
-            save_path.parent.mkdir(parents=True, exist_ok=True)
-            save_path.write_bytes(png_data)
+            if save_path.is_dir():
+                file_path = save_path / f"{block_name}_variant_{variant_number}.png"
+            else:
+                file_path = save_path.parent / f"{save_path.stem}_variant_{variant_number}{save_path.suffix}"
+
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(file_path, 'wb') as f:
+                f.write(png_data)
+            print(f"    Saved to {file_path.name}")
 
         return png_data
 
-    def generate_tool_texture(self, tool_spec: dict) -> bytes:
+    def generate_tool_texture(self, tool_spec: dict, count: int = None) -> List[bytes]:
         """
-        Generate a texture for melee tools like pickaxes.
+        Generate multiple texture variants for melee tools like pickaxes.
+
+        Args:
+            tool_spec: Tool specification dictionary
+            count: Number of variants (defaults to IMAGE_VARIANT_COUNT)
+
+        Returns:
+            List of PNG image data as bytes (16x16 pixels)
         """
         name = tool_spec.get("toolName", "Custom Pickaxe")
         description = tool_spec.get("description", name)
         return self.generate_item_texture(
             item_description=description,
-            item_name=name
+            item_name=name,
+            count=count
+        )
+
+    # Backward compatibility aliases for V1 API
+    def generate_multiple_item_textures(
+        self,
+        item_description: str,
+        item_name: str,
+        count: int = 5
+    ) -> List[bytes]:
+        """
+        Backward compatibility wrapper for V1 API.
+        Calls generate_item_texture with the same parameters.
+
+        Args:
+            item_description: Description of the item
+            item_name: Name of the item
+            count: Number of variants to generate
+
+        Returns:
+            List of PNG image data as bytes (16x16 pixels)
+        """
+        return self.generate_item_texture(
+            item_description=item_description,
+            item_name=item_name,
+            count=count
         )

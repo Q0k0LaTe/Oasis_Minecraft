@@ -11,7 +11,7 @@ from config import DOWNLOADS_DIR
 from models import ItemPromptRequest
 from agents.mod_analyzer import ModAnalyzerAgent
 from agents.mod_generator import ModGenerator
-from agents.image_generator import ImageGenerator
+from agents.tools.image_generator import ImageGenerator
 
 router = APIRouter(prefix="/api", tags=["jobs"])
 
