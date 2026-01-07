@@ -49,6 +49,7 @@ class Orchestrator:
             temperature=AI_TEMPERATURE,
             max_retries=AI_MAX_RETRIES,
             request_timeout=AI_REQUEST_TIMEOUT,
+            transport="rest",  # Use REST API instead of gRPC to avoid proxy issues
         )
 
     def process_prompt(
