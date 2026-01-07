@@ -9,7 +9,7 @@ Key principle: Specs can be incomplete or ambiguous.
 The Compiler's job is to fill in defaults and resolve ambiguity.
 """
 from typing import List, Optional, Dict, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 from enum import Enum
 
 
@@ -34,6 +34,35 @@ class CreativeTab(str, Enum):
     INGREDIENTS = "INGREDIENTS"
     SPAWN_EGGS = "SPAWN_EGGS"
     MISC = "MISC"
+
+
+def normalize_creative_tab(value: Any, default: "CreativeTab" = None) -> "CreativeTab":
+    """
+    Safely convert arbitrary creative tab strings to a CreativeTab enum.
+
+    Unknown or misspelled values fall back to the provided default (MISC if omitted).
+    """
+    default = default or CreativeTab.MISC
+    if value is None:
+        return default
+    if isinstance(value, CreativeTab):
+        return value
+
+    normalized = str(value).strip().upper().replace(" ", "_").replace("-", "_")
+    normalized = normalized.strip(" '\"")
+    alias_map = {
+        "MATERIALS": CreativeTab.INGREDIENTS.value,
+        "MATERIAL": CreativeTab.INGREDIENTS.value,
+        "INGREDIENT": CreativeTab.INGREDIENTS.value,
+        "FOOD": CreativeTab.FOOD_AND_DRINK.value,
+        "FOODS": CreativeTab.FOOD_AND_DRINK.value,
+    }
+    normalized = alias_map.get(normalized, normalized)
+
+    try:
+        return CreativeTab(normalized)
+    except ValueError:
+        return default
 
 
 class Material(str, Enum):
@@ -79,6 +108,11 @@ class ItemSpec(BaseModel):
     texture_description: Optional[str] = Field(None, description="How the texture should look")
     texture_references: Optional[List[str]] = Field(None, description="Vanilla items to reference")
 
+    @field_validator("creative_tab", mode="before")
+    @classmethod
+    def _coerce_creative_tab(cls, v):
+        return normalize_creative_tab(v)
+
 
 class BlockSpec(BaseModel):
     """Specification for a custom block"""
@@ -103,6 +137,11 @@ class BlockSpec(BaseModel):
     # Texture hints
     texture_description: Optional[str] = Field(None)
     texture_references: Optional[List[str]] = Field(None)
+
+    @field_validator("creative_tab", mode="before")
+    @classmethod
+    def _coerce_creative_tab(cls, v):
+        return normalize_creative_tab(v, CreativeTab.BUILDING_BLOCKS)
 
 
 class ToolSpec(BaseModel):
@@ -129,6 +168,11 @@ class ToolSpec(BaseModel):
     # Texture hints
     texture_description: Optional[str] = Field(None)
     texture_references: Optional[List[str]] = Field(None)
+
+    @field_validator("creative_tab", mode="before")
+    @classmethod
+    def _coerce_creative_tab(cls, v):
+        return normalize_creative_tab(v, CreativeTab.TOOLS)
 
 
 class ModSpec(BaseModel):
@@ -163,13 +207,34 @@ class SpecDelta(BaseModel):
     """
     Incremental change to ModSpec
 
-    The Orchestrator produces these from conversations.
-    The Spec Manager applies them to maintain the canonical spec.
+    Supports both structured JSON-path updates (operation/path/value) and
+    higher-level create/update deltas used by SpecManager tests.
     """
-    operation: str = Field(..., description="add, update, remove")
-    path: str = Field(..., description="JSON path to modify (e.g., 'items[0].rarity')")
+    # Structured JSON patch style (used by Orchestrator)
+    operation: Optional[str] = Field(None, description="add, update, remove")
+    path: Optional[str] = Field(None, description="JSON path to modify (e.g., 'items[0].rarity')")
     value: Optional[Any] = Field(None, description="New value to set (for add/update)")
     reason: Optional[str] = Field(None, description="Why this change was made")
+
+    # Semantic delta style (used by SpecManager tests/legacy flow)
+    delta_type: Optional[str] = Field(None, description="create or update delta")
+    mod_name: Optional[str] = None
+    mod_id: Optional[str] = None
+    version: Optional[str] = None
+    author: Optional[str] = None
+    description: Optional[str] = None
+    minecraft_version: Optional[str] = None
+    fabric_loader_version: Optional[str] = None
+    fabric_api_version: Optional[str] = None
+    items_to_add: List[ItemSpec] = Field(default_factory=list)
+    blocks_to_add: List[BlockSpec] = Field(default_factory=list)
+    tools_to_add: List[ToolSpec] = Field(default_factory=list)
+
+    model_config = ConfigDict(extra="ignore")
+
+    def is_structured(self) -> bool:
+        """Return True when using operation/path/value style deltas."""
+        return self.operation is not None and self.path is not None
 
 
 # Export for convenience
@@ -181,6 +246,7 @@ __all__ = [
     "ToolSpec",
     "Rarity",
     "CreativeTab",
+    "normalize_creative_tab",
     "Material",
     "SoundGroup",
 ]

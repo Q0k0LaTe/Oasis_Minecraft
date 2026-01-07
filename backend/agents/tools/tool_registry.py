@@ -54,7 +54,7 @@ class ToolRegistry:
         self._registry["setup_workspace"] = self._wrap_tool(
             setup_workspace,
             description="Create mod directory structure",
-            inputs=["mod_id", "package_name"],
+            inputs=["workspace_dir", "mod_id", "package_name"],
             outputs=["workspace_path"]
         )
 
@@ -69,7 +69,17 @@ class ToolRegistry:
         self._registry["generate_fabric_mod_json"] = self._wrap_tool(
             generate_fabric_mod_json,
             description="Generate fabric.mod.json metadata file",
-            inputs=["workspace_path", "mod_id", "mod_name", "version", "description", "authors", "license"],
+            inputs=[
+                "workspace_path",
+                "mod_id",
+                "mod_name",
+                "version",
+                "description",
+                "authors",
+                "license",
+                "package_name",
+                "main_class_name",
+            ],
             outputs=["fabric_mod_json_path"]
         )
 
@@ -77,7 +87,7 @@ class ToolRegistry:
         self._registry["generate_java_code"] = self._wrap_tool(
             generate_java_code,
             description="Generate Java source code for mod classes",
-            inputs=["workspace_path", "package_name", "mod_id", "items", "blocks", "tools"],
+            inputs=["workspace_path", "package_name", "mod_id", "main_class_name", "items", "blocks", "tools"],
             outputs=["main_class_path", "items_class_path", "blocks_class_path"]
         )
 
@@ -101,7 +111,7 @@ class ToolRegistry:
         self._registry["generate_mixins_json"] = self._wrap_tool(
             generate_mixins_json,
             description="Generate mixins configuration file",
-            inputs=["workspace_path", "package_name"],
+            inputs=["workspace_path", "mod_id", "package_name"],
             outputs=["mixins_json_path"]
         )
 
@@ -127,9 +137,11 @@ class ToolRegistry:
         This allows us to query tool capabilities.
         """
         def wrapper(**kwargs):
-            # Inject workspace_dir if needed
-            if "workspace_path" not in kwargs and func.__name__ != "setup_workspace":
-                kwargs["workspace_dir"] = self.workspace_dir
+            # Provide sensible workspace defaults
+            if func.__name__ == "setup_workspace":
+                kwargs.setdefault("workspace_dir", self.workspace_dir)
+            else:
+                kwargs.setdefault("workspace_path", self.workspace_dir)
             return func(**kwargs)
 
         # Attach metadata
@@ -149,8 +161,8 @@ class ToolRegistry:
         # Generate textures
         variants = self.image_generator.generate_item_texture(
             item_name=item_name,
-            description=description,
-            num_variants=variant_count
+            item_description=description or item_name,
+            count=variant_count
         )
 
         return {"texture_variants": variants}

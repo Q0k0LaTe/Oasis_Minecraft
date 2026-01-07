@@ -1193,17 +1193,12 @@ public class ModBlocks {{
 
     def _create_icon_from_texture(self, png_data: bytes, icon_path: Path):
         """Upscale the generated texture so Fabric's icon reference always exists"""
-        try:
-            img = Image.open(BytesIO(png_data))
-            upscale = img.resize((128, 128), Image.Resampling.NEAREST)
-            buffer = BytesIO()
-            upscale.save(buffer, format="PNG")
-            icon_path.write_bytes(buffer.getvalue())
-            print(f"✓ Mod icon saved to {icon_path}")
-        except Exception as e:
-            print(f"Warning: Could not upscale icon texture: {e}")
-            # As a fallback, just copy the original bytes
-            icon_path.write_bytes(png_data)
+        img = Image.open(BytesIO(png_data))
+        upscale = img.resize((128, 128), Image.Resampling.NEAREST)
+        buffer = BytesIO()
+        upscale.save(buffer, format="PNG")
+        icon_path.write_bytes(buffer.getvalue())
+        print(f"✓ Mod icon saved to {icon_path}")
 
     def _generate_mixins_json(self, mod_dir: Path, spec: Dict[str, Any]):
         """Generate mixins JSON (empty but required)"""

@@ -17,7 +17,16 @@ from langchain.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser
 
 from config import GEMINI_API_KEY, AI_MODEL, AI_TEMPERATURE, AI_REQUEST_TIMEOUT, AI_MAX_RETRIES
-from agents.schemas import ModSpec, SpecDelta, ItemSpec, BlockSpec, ToolSpec, Rarity, CreativeTab
+from agents.schemas import (
+    ModSpec,
+    SpecDelta,
+    ItemSpec,
+    BlockSpec,
+    ToolSpec,
+    Rarity,
+    CreativeTab,
+    normalize_creative_tab,
+)
 
 
 class OrchestratorResponse(BaseModel):
@@ -226,41 +235,11 @@ Be generous in interpretation. If unclear, make reasonable assumptions.
 
         chain = prompt_template | self.llm | parser
 
-        try:
-            result = chain.invoke({
-                "prompt": prompt,
-                "format_instructions": parser.get_format_instructions()
-            })
-            return result.dict()
-        except Exception as e:
-            # Fallback parsing
-            print(f"LLM parsing failed: {e}, using fallback")
-            return self._fallback_parse(prompt)
-
-    def _fallback_parse(self, prompt: str) -> Dict[str, Any]:
-        """Simple keyword-based parsing as fallback"""
-        prompt_lower = prompt.lower()
-
-        # Detect type
-        item_type = "item"
-        if any(word in prompt_lower for word in ["block", "ore", "stone"]):
-            item_type = "block"
-        elif any(word in prompt_lower for word in ["pickaxe", "sword", "axe", "shovel", "hoe"]):
-            item_type = "tool"
-
-        # Extract name (simple heuristic)
-        name = "Custom Item"
-        if "called" in prompt_lower:
-            name = prompt.split("called", 1)[1].split()[0].strip()
-
-        return {
-            "type": item_type,
-            "name": name.title(),
-            "description": prompt,
-            "rarity": "COMMON",
-            "inferred_mod_name": f"{name} Mod",
-            "creative_tab": "MISC"
-        }
+        result = chain.invoke({
+            "prompt": prompt,
+            "format_instructions": parser.get_format_instructions()
+        })
+        return result.dict()
 
     def _parse_modification_intent(self, prompt: str, current_spec: ModSpec) -> Dict[str, Any]:
         """Parse what modification the user wants"""
@@ -290,7 +269,7 @@ Be generous in interpretation. If unclear, make reasonable assumptions.
             item_name=parsed.get("name", "Custom Item"),
             description=parsed.get("description", "A custom item"),
             rarity=Rarity(parsed.get("rarity", "COMMON")),
-            creative_tab=CreativeTab(parsed.get("creative_tab", "MISC")),
+            creative_tab=normalize_creative_tab(parsed.get("creative_tab", "MISC"), CreativeTab.MISC),
             special_ability=parsed.get("special_ability"),
             texture_description=parsed.get("texture_description")
         )
@@ -300,7 +279,7 @@ Be generous in interpretation. If unclear, make reasonable assumptions.
         return BlockSpec(
             block_name=parsed.get("name", "Custom Block"),
             description=parsed.get("description", "A custom block"),
-            creative_tab=CreativeTab.BUILDING_BLOCKS,
+            creative_tab=normalize_creative_tab(parsed.get("creative_tab"), CreativeTab.BUILDING_BLOCKS),
             texture_description=parsed.get("texture_description")
         )
 
@@ -311,7 +290,7 @@ Be generous in interpretation. If unclear, make reasonable assumptions.
             tool_name=parsed.get("name", "Custom Tool"),
             tool_type=tool_type,
             description=parsed.get("description", "A custom tool"),
-            creative_tab=CreativeTab.TOOLS,
+            creative_tab=normalize_creative_tab(parsed.get("creative_tab"), CreativeTab.TOOLS),
             texture_description=parsed.get("texture_description")
         )
 

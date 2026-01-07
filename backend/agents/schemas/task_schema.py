@@ -40,7 +40,10 @@ class Task(BaseModel):
     # Execution
     tool_calls: List[ToolCall] = Field(default_factory=list, description="Tools to invoke for this task")
     inputs: Dict[str, Any] = Field(default_factory=dict, description="Input data from IR or previous tasks")
-    expected_outputs: Dict[str, str] = Field(default_factory=dict, description="Output file paths or artifacts")
+    expected_outputs: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Output file paths or artifacts (strings or structured data)"
+    )
 
     # Status tracking
     status: TaskStatus = Field(TaskStatus.PENDING)

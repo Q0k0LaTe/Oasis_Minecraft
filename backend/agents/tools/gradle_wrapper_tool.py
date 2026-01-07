@@ -19,7 +19,7 @@ def setup_gradle_wrapper(workspace_path: Path) -> Dict[str, Any]:
         Dictionary with paths to gradle wrapper files
     """
     mod_dir = Path(workspace_path)
-    templates_dir = Path(__file__).parent.parent.parent / "templates"
+    templates_dir = Path(__file__).parent.parent.parent / "templates" / "gradle_wrapper_template"
 
     # Copy gradle wrapper directory
     wrapper_src = templates_dir / "gradle" / "wrapper"

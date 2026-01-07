@@ -146,19 +146,20 @@ class ModGenerationPipeline:
 
             # Phase 4: Planner - Convert IR → Task DAG
             log("Phase 4: Planning execution tasks...")
-            task_dag = self.planner.plan(mod_ir)
+            task_dag = self.planner.plan(mod_ir, workspace_root=self.workspace_dir)
             log(f"✓ Generated execution plan with {task_dag.total_tasks} tasks")
 
             # Phase 5: Executor - Run tasks
             log("Phase 5: Executing tasks...")
-            mod_workspace = self.workspace_dir / mod_ir.mod_id
+            workspace_root = self.workspace_dir
+            mod_workspace = workspace_root / mod_ir.mod_id
 
             # Create tool registry for this workspace
-            tool_registry = create_tool_registry(mod_workspace)
+            tool_registry = create_tool_registry(workspace_root)
 
             # Create executor
             executor = Executor(
-                workspace_dir=mod_workspace,
+                workspace_dir=workspace_root,
                 tool_registry=tool_registry
             )
 

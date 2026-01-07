@@ -79,10 +79,10 @@ public class {main_class_name}Client implements ClientModInitializer {{
     client_class_path.write_text(client_class)
 
     # Generate ModItems class
-    items_class_path = _generate_mod_items_class(java_path, package_name, mod_id, items)
+    items_class_path = _generate_mod_items_class(java_path, package_name, mod_id, main_class_name, items)
 
     # Generate ModBlocks class
-    blocks_class_path = _generate_mod_blocks_class(java_path, package_name, mod_id, blocks)
+    blocks_class_path = _generate_mod_blocks_class(java_path, package_name, mod_id, main_class_name, blocks)
 
     return {
         "status": "success",
@@ -97,6 +97,7 @@ def _generate_mod_items_class(
     java_path: Path,
     package_name: str,
     mod_id: str,
+    main_class_name: str,
     items: List[Dict[str, Any]]
 ) -> Path:
     """Generate ModItems.java with item registrations"""
@@ -112,7 +113,7 @@ def _generate_mod_items_class(
         fireproof = item.get("fireproof", False)
         max_stack = item.get("max_stack_size", 64)
 
-        item_declarations.append(f'\tpublic static final Item {registration_id};')
+        item_declarations.append(f'\tpublic static Item {registration_id};')
 
         settings = f"new Item.Settings().maxCount({max_stack})"
         if fireproof:
@@ -131,7 +132,7 @@ import net.minecraft.item.Item;
 import net.minecraft.registry.Registries;
 import net.minecraft.registry.Registry;
 import net.minecraft.util.Identifier;
-import {package_name}.{_to_class_name(mod_id)} as {main_class_name};
+import {package_name}.{main_class_name};
 
 public class ModItems {{
 {chr(10).join(item_declarations)}
@@ -151,6 +152,7 @@ def _generate_mod_blocks_class(
     java_path: Path,
     package_name: str,
     mod_id: str,
+    main_class_name: str,
     blocks: List[Dict[str, Any]]
 ) -> Path:
     """Generate ModBlocks.java with block registrations"""
@@ -167,7 +169,7 @@ def _generate_mod_blocks_class(
         resistance = block.get("resistance", 3.0)
         requires_tool = block.get("requires_tool", True)
 
-        block_declarations.append(f'\tpublic static final Block {registration_id};')
+        block_declarations.append(f'\tpublic static Block {registration_id};')
 
         settings = f"Block.Settings.create().strength({hardness}f, {resistance}f)"
         if requires_tool:
@@ -193,7 +195,7 @@ import net.minecraft.item.Item;
 import net.minecraft.registry.Registries;
 import net.minecraft.registry.Registry;
 import net.minecraft.util.Identifier;
-import {package_name}.{_to_class_name(mod_id)} as {main_class_name};
+import {package_name}.{main_class_name};
 
 public class ModBlocks {{
 {chr(10).join(block_declarations)}

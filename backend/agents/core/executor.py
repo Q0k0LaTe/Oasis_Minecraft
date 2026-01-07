@@ -119,8 +119,23 @@ class Executor:
 
         tool_func = self.tool_registry[tool_name]
 
-        # Merge tool parameters with task inputs
+        # Merge tool parameters with task inputs, but pass only what the tool expects
         params = {**task_inputs, **tool_call.parameters}
+
+        # Derive required params from IR context when available
+        ir_context = task_inputs.get("ir")
+        if ir_context:
+            params.setdefault("mod_id", ir_context.get("mod_id"))
+            params.setdefault("package_name", ir_context.get("base_package"))
+
+        allowed_params = getattr(tool_func, "__tool_inputs__", None)
+        if allowed_params:
+            params = {k: v for k, v in params.items() if k in allowed_params}
+            if "mod_id" in allowed_params and "mod_id" not in params:
+                if ir_context and ir_context.get("mod_id"):
+                    params["mod_id"] = ir_context["mod_id"]
+                else:
+                    raise ExecutionError(f"Missing required mod_id for tool {tool_name}")
 
         # Call the tool
         try:

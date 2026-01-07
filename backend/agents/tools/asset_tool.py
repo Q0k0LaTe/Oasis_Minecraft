@@ -23,7 +23,8 @@ def generate_assets(
     items: List[Dict[str, Any]] = None,
     blocks: List[Dict[str, Any]] = None,
     tools: List[Dict[str, Any]] = None,
-    assets: List[Dict[str, Any]] = None
+    assets: List[Dict[str, Any]] = None,
+    textures: Dict[str, Any] = None
 ) -> Dict[str, Any]:
     """
     Generate all resource files (assets and data)
@@ -35,6 +36,7 @@ def generate_assets(
         blocks: List of block specifications from IR
         tools: List of tool specifications from IR
         assets: List of IRAsset specifications
+        textures: Optional pre-generated texture map (unused for now)
 
     Returns:
         Dictionary with paths to generated asset directories
@@ -47,6 +49,7 @@ def generate_assets(
     blocks = blocks or []
     tools = tools or []
     assets = assets or []
+    textures = textures or {}
 
     generated_files = []
 

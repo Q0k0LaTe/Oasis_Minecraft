@@ -11,7 +11,7 @@ from typing import Dict, Any
 def generate_mixins_json(
     workspace_path: Path,
     mod_id: str,
-    package_name: str = None
+    package_name: str | None = None
 ) -> Dict[str, Any]:
     """
     Generate mixins configuration file
@@ -26,6 +26,8 @@ def generate_mixins_json(
     """
     mod_dir = Path(workspace_path)
 
+    if not mod_id:
+        raise ValueError("mod_id is required to generate mixins.json")
     if not package_name:
         package_name = f"com.example.{mod_id.replace('-', '_')}"
 

@@ -411,7 +411,7 @@ class Compiler:
 
     def _generate_base_package(self, mod_id: str) -> str:
         """Generate base Java package"""
-        return f"com.{mod_id}.mod"
+        return f"com.example.{mod_id}"
 
     def _generate_main_class_name(self, mod_name: str) -> str:
         """Generate main class name"""
@@ -451,7 +451,7 @@ class Compiler:
             "mod_id": mod_id,
             "mod_name": spec.mod_name,
             "mod_version": spec.version or "1.0.0",
-            "maven_group": f"com.{mod_id}"
+            "maven_group": f"com.example.{mod_id}"
         }
 
     def _validate_ir(self, ir: ModIR):

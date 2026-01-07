@@ -10,8 +10,9 @@ Responsibilities:
 The Planner is "dumb" - it mechanically decomposes IR into tasks.
 No interpretation or reasoning.
 """
-from typing import List, Dict, Set
+from typing import List, Dict, Set, Optional
 from datetime import datetime
+from pathlib import Path
 
 from agents.schemas import ModIR, IRItem, IRBlock, IRTool, IRAsset, Task, TaskDAG, ToolCall, TaskStatus
 
@@ -26,21 +27,25 @@ class Planner:
     def __init__(self):
         self.task_counter = 0
 
-    def plan(self, ir: ModIR) -> TaskDAG:
+    def plan(self, ir: ModIR, workspace_root: Optional[Path] = None) -> TaskDAG:
         """
         Create execution plan from IR
 
         Args:
             ir: Complete Intermediate Representation
+            workspace_root: Base directory where the mod should be generated
 
         Returns:
             TaskDAG with all tasks and dependencies
         """
+        workspace_root = Path(workspace_root) if workspace_root else Path("generated")
+        mod_workspace = workspace_root / ir.mod_id
+
         tasks = []
         self.task_counter = 0
 
         # Phase 1: Setup workspace
-        setup_task = self._create_setup_task(ir)
+        setup_task = self._create_setup_task(ir, workspace_root, mod_workspace)
         tasks.append(setup_task)
 
         # Phase 2: Generate textures (can run in parallel)
@@ -48,24 +53,24 @@ class Planner:
         tasks.extend(texture_tasks)
 
         # Phase 3: Generate Java code (depends on setup)
-        code_task = self._create_code_generation_task(ir, setup_task.task_id)
+        code_task = self._create_code_generation_task(ir, setup_task.task_id, mod_workspace)
         tasks.append(code_task)
 
         # Phase 4: Generate assets (depends on textures)
-        assets_task = self._create_assets_generation_task(ir, [t.task_id for t in texture_tasks])
+        assets_task = self._create_assets_generation_task(ir, [t.task_id for t in texture_tasks], mod_workspace)
         tasks.append(assets_task)
 
         # Phase 5: Generate build configuration (depends on setup)
-        config_tasks = self._create_build_config_tasks(ir, setup_task.task_id)
+        config_tasks = self._create_build_config_tasks(ir, setup_task.task_id, mod_workspace)
         tasks.extend(config_tasks)
 
         # Phase 6: Setup Gradle wrapper (depends on setup)
-        gradle_wrapper_task = self._create_gradle_wrapper_task(ir, setup_task.task_id)
+        gradle_wrapper_task = self._create_gradle_wrapper_task(ir, setup_task.task_id, mod_workspace)
         tasks.append(gradle_wrapper_task)
 
         # Phase 7: Build mod (depends on everything)
         all_task_ids = [t.task_id for t in tasks]
-        build_task = self._create_build_task(ir, all_task_ids)
+        build_task = self._create_build_task(ir, all_task_ids, mod_workspace)
         tasks.append(build_task)
 
         # Create DAG
@@ -86,7 +91,7 @@ class Planner:
         self.task_counter += 1
         return f"task_{self.task_counter:03d}"
 
-    def _create_setup_task(self, ir: ModIR) -> Task:
+    def _create_setup_task(self, ir: ModIR, workspace_root: Path, mod_workspace: Path) -> Task:
         """Create workspace setup task"""
         return Task(
             task_id=self._next_task_id(),
@@ -96,13 +101,14 @@ class Planner:
                 ToolCall(
                     tool_name="setup_workspace",
                     parameters={
+                        "workspace_dir": str(workspace_root),
                         "mod_id": ir.mod_id,
                         "package_name": ir.base_package
                     }
                 )
             ],
             inputs={},
-            expected_outputs={"workspace_path": f"generated/{ir.mod_id}"},
+            expected_outputs={"workspace_path": str(mod_workspace)},
             parallelizable=False,
             priority=100
         )
@@ -114,11 +120,11 @@ class Planner:
         # Collect all items/blocks/tools that need textures
         entities = []
         for item in ir.items:
-            entities.append(("item", item.item_name, item.item_id, item.description))
+            entities.append(("item", item.display_name, item.item_id, item.description))
         for block in ir.blocks:
-            entities.append(("block", block.block_name, block.block_id, block.description))
+            entities.append(("block", block.display_name, block.block_id, block.description))
         for tool in ir.tools:
-            entities.append(("tool", tool.tool_name, tool.tool_id, tool.description))
+            entities.append(("tool", tool.display_name, tool.tool_id, tool.description))
 
         for entity_type, name, entity_id, description in entities:
             task = Task(
@@ -144,12 +150,12 @@ class Planner:
 
         return tasks
 
-    def _create_code_generation_task(self, ir: ModIR, depends_on: str) -> Task:
+    def _create_code_generation_task(self, ir: ModIR, depends_on: str, mod_workspace: Path) -> Task:
         """Create Java code generation task (generates all code at once)"""
         # Convert IR items/blocks/tools to dict format for the tool
-        items_data = [item.dict() for item in ir.items]
-        blocks_data = [block.dict() for block in ir.blocks]
-        tools_data = [tool.dict() for tool in ir.tools]
+        items_data = [item.model_dump() for item in ir.items]
+        blocks_data = [block.model_dump() for block in ir.blocks]
+        tools_data = [tool.model_dump() for tool in ir.tools]
 
         return Task(
             task_id=self._next_task_id(),
@@ -160,7 +166,7 @@ class Planner:
                 ToolCall(
                     tool_name="generate_java_code",
                     parameters={
-                        "workspace_path": f"generated/{ir.mod_id}",
+                        "workspace_path": str(mod_workspace),
                         "package_name": ir.base_package,
                         "mod_id": ir.mod_id,
                         "main_class_name": ir.main_class_name,
@@ -170,16 +176,16 @@ class Planner:
                     }
                 )
             ],
-            inputs={"ir": ir.dict()},
+            inputs={"ir": ir.model_dump()},
             expected_outputs={"main_class_path": "src/main/java/..."},
             priority=70
         )
 
-    def _create_assets_generation_task(self, ir: ModIR, depends_on: List[str]) -> Task:
+    def _create_assets_generation_task(self, ir: ModIR, depends_on: List[str], mod_workspace: Path) -> Task:
         """Create assets generation task (generates all resource files)"""
-        items_data = [item.dict() for item in ir.items]
-        blocks_data = [block.dict() for block in ir.blocks]
-        tools_data = [tool.dict() for tool in ir.tools]
+        items_data = [item.model_dump() for item in ir.items]
+        blocks_data = [block.model_dump() for block in ir.blocks]
+        tools_data = [tool.model_dump() for tool in ir.tools]
 
         # Placeholder textures dict - will be populated by texture generation tasks
         textures = {}
@@ -193,7 +199,7 @@ class Planner:
                 ToolCall(
                     tool_name="generate_assets",
                     parameters={
-                        "workspace_path": f"generated/{ir.mod_id}",
+                        "workspace_path": str(mod_workspace),
                         "mod_id": ir.mod_id,
                         "items": items_data,
                         "blocks": blocks_data,
@@ -202,12 +208,12 @@ class Planner:
                     }
                 )
             ],
-            inputs={"ir": ir.dict()},
+            inputs={"ir": ir.model_dump()},
             expected_outputs={"assets_path": "src/main/resources/assets"},
             priority=60
         )
 
-    def _create_build_config_tasks(self, ir: ModIR, depends_on: str) -> List[Task]:
+    def _create_build_config_tasks(self, ir: ModIR, depends_on: str, mod_workspace: Path) -> List[Task]:
         """Create build configuration tasks"""
         tasks = []
 
@@ -221,7 +227,7 @@ class Planner:
                 ToolCall(
                     tool_name="generate_gradle_files",
                     parameters={
-                        "workspace_path": f"generated/{ir.mod_id}",
+                        "workspace_path": str(mod_workspace),
                         "mod_id": ir.mod_id,
                         "mod_name": ir.mod_name,
                         "version": ir.version,
@@ -230,7 +236,7 @@ class Planner:
                     }
                 )
             ],
-            inputs={"ir": ir.dict()},
+            inputs={"ir": ir.model_dump()},
             expected_outputs={"build_gradle": "build.gradle"},
             priority=60
         )
@@ -246,17 +252,19 @@ class Planner:
                 ToolCall(
                     tool_name="generate_fabric_mod_json",
                     parameters={
-                        "workspace_path": f"generated/{ir.mod_id}",
+                        "workspace_path": str(mod_workspace),
                         "mod_id": ir.mod_id,
                         "mod_name": ir.mod_name,
                         "version": ir.version,
                         "description": ir.description,
-                        "authors": ir.authors,
-                        "license": "MIT"
+                        "authors": [ir.author] if ir.author else [],
+                        "license": "MIT",
+                        "package_name": ir.base_package,
+                        "main_class_name": ir.main_class_name
                     }
                 )
             ],
-            inputs={"ir": ir.dict()},
+            inputs={"ir": ir.model_dump()},
             expected_outputs={"fabric_mod_json": "src/main/resources/fabric.mod.json"},
             priority=60
         )
@@ -272,20 +280,25 @@ class Planner:
                 ToolCall(
                     tool_name="generate_mixins_json",
                     parameters={
-                        "workspace_path": f"generated/{ir.mod_id}",
+                        "workspace_path": str(mod_workspace),
+                        "mod_id": ir.mod_id,
                         "package_name": ir.base_package
                     }
                 )
             ],
-            inputs={"ir": ir.dict()},
-            expected_outputs={"mixins_json": "src/main/resources/mixins.json"},
+            inputs={
+                "ir": ir.model_dump(),
+                "mod_id": ir.mod_id,
+                "package_name": ir.base_package
+            },
+            expected_outputs={"mixins_json": f"src/main/resources/{ir.mod_id}.mixins.json"},
             priority=60
         )
         tasks.append(mixins_task)
 
         return tasks
 
-    def _create_gradle_wrapper_task(self, ir: ModIR, depends_on: str) -> Task:
+    def _create_gradle_wrapper_task(self, ir: ModIR, depends_on: str, mod_workspace: Path) -> Task:
         """Create Gradle wrapper setup task"""
         return Task(
             task_id=self._next_task_id(),
@@ -296,7 +309,7 @@ class Planner:
                 ToolCall(
                     tool_name="setup_gradle_wrapper",
                     parameters={
-                        "workspace_path": f"generated/{ir.mod_id}"
+                        "workspace_path": str(mod_workspace)
                     }
                 )
             ],
@@ -305,7 +318,7 @@ class Planner:
             priority=50
         )
 
-    def _create_build_task(self, ir: ModIR, depends_on: List[str]) -> Task:
+    def _create_build_task(self, ir: ModIR, depends_on: List[str], mod_workspace: Path) -> Task:
         """Create Gradle build task"""
         return Task(
             task_id=self._next_task_id(),
@@ -316,12 +329,12 @@ class Planner:
                 ToolCall(
                     tool_name="build_mod",
                     parameters={
-                        "workspace_path": f"generated/{ir.mod_id}",
+                        "workspace_path": str(mod_workspace),
                         "mod_id": ir.mod_id
                     }
                 )
             ],
-            inputs={"ir": ir.dict()},
+            inputs={"ir": ir.model_dump()},
             expected_outputs={"jar_file": f"build/libs/{ir.mod_id}-{ir.version}.jar"},
             priority=10
         )
