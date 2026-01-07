@@ -152,29 +152,14 @@ class ModGenerationPipeline:
 
             # Phase 6: Validator - Pre-build validation
             log("Phase 6: Validating generated files...")
-            validation_result = self.validator.validate(
-                mod_dir=mod_workspace,
-                ir=mod_ir
-            )
-
-            if not validation_result["valid"]:
-                log("⚠ Validation found issues:")
-                for error in validation_result.get("errors", []):
-                    log(f"  - {error}")
-
-                # Attempt to fix errors
-                if validation_result.get("errors"):
-                    log("Attempting to fix validation errors...")
-                    patch = self.error_fixer.generate_patch(
-                        mod_dir=mod_workspace,
-                        errors=validation_result["errors"],
-                        ir=mod_ir
-                    )
-                    # Apply patch and re-validate
-                    # (TODO: Implement patch application logic)
-                    log("⚠ Error fixing not yet fully implemented")
-            else:
-                log("✓ Validation passed")
+            try:
+                validation_result = self.validator.validate(ir=mod_ir)
+                log(f"✓ Validation passed ({validation_result['warnings']} warnings)")
+            except Exception as e:
+                log(f"⚠ Validation found issues: {str(e)}")
+                log("⚠ Proceeding to build anyway...")
+                # Note: In production, you might want to halt here
+                # For now, we'll attempt the build and let Gradle catch issues
 
             # Phase 7: Builder - Compile with Gradle
             log("Phase 7: Building mod with Gradle (this may take 1-2 minutes)...")

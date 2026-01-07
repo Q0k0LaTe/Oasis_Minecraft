@@ -42,8 +42,8 @@ class Validator:
     Catches errors before expensive Gradle build.
     """
 
-    def __init__(self, workspace_dir: Path):
-        self.workspace_dir = Path(workspace_dir)
+    def __init__(self, workspace_dir: Optional[Path] = None):
+        self.workspace_dir = Path(workspace_dir) if workspace_dir else None
         self.issues: List[ValidationIssue] = []
 
     def validate(self, ir: ModIR) -> Dict[str, Any]:
