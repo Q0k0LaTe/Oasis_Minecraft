@@ -183,16 +183,12 @@ class ModGenerationPipeline:
                 error_msg = build_result.get("error", "Unknown error")
                 log(f"Error: {error_msg}")
 
-                # Attempt to fix build errors
+                # Show build errors
                 if build_result.get("stderr"):
-                    log("Attempting to fix build errors...")
-                    patch = self.error_fixer.parse_build_errors(
-                        build_output=build_result["stderr"],
-                        mod_dir=mod_workspace,
-                        ir=mod_ir
-                    )
-                    # (TODO: Implement patch application and retry logic)
-                    log("⚠ Error fixing not yet fully implemented")
+                    log("Build output:")
+                    for line in build_result["stderr"].split('\n')[-10:]:
+                        if line.strip():
+                            log(f"  {line}")
 
                 raise PipelineError(f"Build failed: {error_msg}")
 

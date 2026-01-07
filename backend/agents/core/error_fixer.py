@@ -36,8 +36,8 @@ class ErrorFixer:
     Parses errors and generates patches.
     """
 
-    def __init__(self, workspace_dir: Path):
-        self.workspace_dir = Path(workspace_dir)
+    def __init__(self, workspace_dir: Optional[Path] = None):
+        self.workspace_dir = Path(workspace_dir) if workspace_dir else None
 
     def analyze_error(self, error_output: str, error_type: str = "build") -> List[ErrorFix]:
         """
