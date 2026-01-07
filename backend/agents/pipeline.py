@@ -108,15 +108,20 @@ class ModGenerationPipeline:
 
             # Phase 1: Orchestrator - Convert prompt to SpecDelta
             log("Phase 1: Converting prompt to specification delta...")
-            spec_delta = self.orchestrator.process_prompt(
+            orchestrator_response = self.orchestrator.process_prompt(
                 user_prompt=user_prompt,
-                conversation_history=conversation_history or []
+                current_spec=None,
+                context=None  # TODO: Build context from conversation_history
             )
-            log(f"✓ Generated SpecDelta: {spec_delta.delta_type}")
+            log(f"✓ Generated {len(orchestrator_response.deltas)} deltas")
+            if orchestrator_response.requires_user_input:
+                log(f"⚠ Clarifying questions: {orchestrator_response.clarifying_questions}")
 
-            # Phase 2: SpecManager - Apply delta and get current spec
-            log("Phase 2: Applying delta to mod specification...")
-            current_spec = self.spec_manager.apply_delta(spec_delta)
+            # Phase 2: SpecManager - Apply deltas and get current spec
+            log("Phase 2: Applying deltas to mod specification...")
+            current_spec = None
+            for spec_delta in orchestrator_response.deltas:
+                current_spec = self.spec_manager.apply_delta(spec_delta)
             log(f"✓ Current spec version: {current_spec.version}")
             log(f"  - Mod: {current_spec.mod_name} (v{current_spec.version})")
             log(f"  - Items: {len(current_spec.items)}, Blocks: {len(current_spec.blocks)}")
