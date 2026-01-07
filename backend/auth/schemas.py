@@ -92,7 +92,37 @@ class SessionInfo(BaseModel):
         from_attributes = True
 
 
+class GoogleLoginRequest(BaseModel):
+    """Google OAuth login request"""
+    id_token: str = Field(..., description="Google ID Token from client")
+
+
+class GoogleLoginResponse(BaseModel):
+    """Google OAuth login response"""
+    success: bool
+    message: str
+    requires_username: bool = Field(..., description="Whether user needs to set username (first-time login)")
+    session: Optional['SessionInfo'] = None
+    user: Optional['UserInfo'] = None
+
+
+class SetUsernameRequest(BaseModel):
+    """Request to set username for first-time Google login"""
+    id_token: str = Field(..., description="Google ID Token from client")
+    username: str = Field(..., min_length=3, max_length=50, description="Username (3-50 characters)")
+
+
+class SetUsernameResponse(BaseModel):
+    """Response for setting username"""
+    success: bool
+    message: str
+    session: Optional['SessionInfo'] = None
+    user: Optional['UserInfo'] = None
+
+
 # Update forward references
 RegisterResponse.model_rebuild()
 LoginResponse.model_rebuild()
+GoogleLoginResponse.model_rebuild()
+SetUsernameResponse.model_rebuild()
 

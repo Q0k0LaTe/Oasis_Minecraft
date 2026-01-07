@@ -12,6 +12,9 @@
     <!-- FONTS: Silkscreen (Branding), Inter (UI), JetBrains Mono (Code) -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Silkscreen:wght@400;700&display=swap" rel="stylesheet">
     
+    <!-- Google Identity Services -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    
     <link rel="stylesheet" href="assets/css/style.css">
 </head>
 <body>
@@ -48,12 +51,15 @@
                 </div>
             </div>
 
-            <div class="user-profile">
-                <div class="avatar">S</div>
+            <div class="user-profile" id="userProfile" style="display: none;">
+                <div class="avatar" id="userAvatar">S</div>
                 <div class="user-info">
-                    <div class="username">Steve_Dev</div>
-                    <div class="status">Pro Plan</div>
+                    <div class="username" id="userUsername">Steve_Dev</div>
+                    <div class="status" id="userStatus">Pro Plan</div>
                 </div>
+            </div>
+            <div class="user-profile" id="loginPrompt">
+                <a href="login.html" class="btn-primary" style="text-decoration: none; display: inline-block;">Login / Sign Up</a>
             </div>
         </aside>
 
@@ -216,6 +222,68 @@
         <div class="loading-bar"></div>
     </div>
 
+    <!-- Login Modal -->
+    <div id="loginModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Login / Sign Up</h2>
+                <button class="modal-close" id="closeLoginModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="auth-section">
+                    <h3>Sign in with Google</h3>
+                    <div id="googleSignInButton"></div>
+                </div>
+                <div class="auth-divider">
+                    <span>or</span>
+                </div>
+                <div class="auth-section">
+                    <h3>Email & Password</h3>
+                    <p style="color: #888; font-size: 0.9em; margin-bottom: 1em;">
+                        Use email verification code to register or login with password.
+                    </p>
+                    <button class="btn-secondary" id="emailLoginBtn" style="width: 100%;">
+                        Continue with Email
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Username Setup Modal (for first-time Google login) -->
+    <div id="usernameModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Set Your Username</h2>
+            </div>
+            <div class="modal-body">
+                <p style="margin-bottom: 1em; color: #888;">
+                    Please choose a username to complete your registration.
+                </p>
+                <form id="usernameForm">
+                    <div class="form-group">
+                        <label for="usernameInput">Username</label>
+                        <input 
+                            type="text" 
+                            id="usernameInput" 
+                            placeholder="Enter username (3-50 characters)"
+                            minlength="3"
+                            maxlength="50"
+                            required
+                        />
+                        <small class="form-hint">3-50 characters, letters, numbers, and underscores only</small>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn-primary" id="submitUsernameBtn">
+                            Continue
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
     <script src="assets/js/script.js"></script>
+    <script src="assets/js/auth.js"></script>
 </body>
 </html>
