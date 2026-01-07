@@ -16,7 +16,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser
 
-from config import GEMINI_API_KEY, AI_MODEL, AI_TEMPERATURE
+from config import GEMINI_API_KEY, AI_MODEL, AI_TEMPERATURE, AI_REQUEST_TIMEOUT, AI_MAX_RETRIES
 from agents.schemas import ModSpec, SpecDelta, ItemSpec, BlockSpec, ToolSpec, Rarity, CreativeTab
 
 
@@ -47,7 +47,8 @@ class Orchestrator:
             google_api_key=GEMINI_API_KEY,
             model=AI_MODEL,
             temperature=AI_TEMPERATURE,
-            max_retries=2,
+            max_retries=AI_MAX_RETRIES,
+            request_timeout=AI_REQUEST_TIMEOUT,
         )
 
     def process_prompt(
