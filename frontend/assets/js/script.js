@@ -1,6 +1,6 @@
 // Configuration
-const API_BASE_URL = 'http://localhost:3000/api';
-const BACKEND_BASE_URL = API_BASE_URL.replace(/\/api\/?$/, '');
+const API_BASE_URL = 'http://localhost:3000/api/v2';
+const BACKEND_BASE_URL = API_BASE_URL.replace(/\/api\/v2\/?$/, '');
 const POLL_INTERVAL = 2000;
 
 // Global state
@@ -41,10 +41,10 @@ async function startGeneration() {
     try {
         generateBtn.disabled = true;
         addLogEntry('Submitting request to AI...');
-        updateStatusBadge('queued', 0);
+        updateStatusBadge('pending', 0);
 
         // Submit job
-        const response = await fetch(`${API_BASE_URL}/generate-mod`, {
+        const response = await fetch(`${API_BASE_URL}/generate`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ prompt })
@@ -59,7 +59,7 @@ async function startGeneration() {
         currentJobId = data.jobId;
 
         addLogEntry(`Job started: ${currentJobId}`);
-        updateStatusBadge('queued', 0);
+        updateStatusBadge('pending', 0);
 
         // Start polling
         startPolling();
@@ -109,7 +109,7 @@ function stopPolling() {
 
 // Handle different job statuses
 function handleJobStatus(job) {
-    const { status, logs, progress, pendingImageSelection, result, error } = job;
+    const { status, logs, progress, result, error } = job;
 
     // Update logs
     if (logs && logs.length > 0) {
@@ -121,16 +121,9 @@ function handleJobStatus(job) {
 
     // Handle different states
     switch (status) {
-        case 'queued':
-        case 'analyzing':
-        case 'generating':
-        case 'generating_images':
+        case 'pending':
+        case 'processing':
             // Continue polling
-            break;
-
-        case 'awaiting_image_selection':
-            stopPolling();
-            showImageSelectionModal(pendingImageSelection);
             break;
 
         case 'completed':
@@ -150,11 +143,8 @@ function updateStatusBadge(status, progress) {
     if (!statusBadge) return;
 
     const statusText = {
-        'queued': 'Queued',
-        'analyzing': 'Analyzing',
-        'generating': 'Generating',
-        'generating_images': 'Creating Images',
-        'awaiting_image_selection': 'Choose Textures',
+        'pending': 'Pending',
+        'processing': 'Processing',
         'completed': 'Complete',
         'failed': 'Failed'
     };
@@ -168,8 +158,6 @@ function updateStatusBadge(status, progress) {
         statusBadge.classList.add('status-success');
     } else if (status === 'failed') {
         statusBadge.classList.add('status-error');
-    } else if (status === 'awaiting_image_selection') {
-        statusBadge.classList.add('status-selection');
     } else {
         statusBadge.classList.add('status-working');
     }
@@ -212,158 +200,13 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
-// Show image selection modal
-function showImageSelectionModal(pendingImageSelection) {
-    // Create modal
-    const modal = document.createElement('div');
-    modal.id = 'imageSelectionModal';
-    modal.className = 'image-selection-modal';
-
-    const assetTypes = Object.keys(pendingImageSelection);
-    let currentAssetIndex = 0;
-    let selections = {};
-
-    function renderAssetSelection() {
-        const assetType = assetTypes[currentAssetIndex];
-        const assetData = pendingImageSelection[assetType];
-
-        modal.innerHTML = `
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h2>Choose Texture (${currentAssetIndex + 1}/${assetTypes.length})</h2>
-                    <p>${assetData.name} - ${assetType.toUpperCase()}</p>
-                </div>
-                <div class="image-grid">
-                    ${assetData.options.map((img, index) => `
-                        <div class="image-option" data-index="${index}">
-                            <img src="data:image/png;base64,${img}" alt="Option ${index + 1}">
-                            <div class="image-label">Option ${index + 1}</div>
-                        </div>
-                    `).join('')}
-                </div>
-                <div class="modal-actions">
-                    <button class="btn-regenerate" id="regenerateBtn">
-                        <span class="btn-icon">🔄</span> Regenerate 5 More
-                    </button>
-                    ${currentAssetIndex > 0 ? '<button class="btn-secondary" id="backBtn">← Back</button>' : ''}
-                </div>
-            </div>
-        `;
-
-        // Add click handlers for image selection
-        modal.querySelectorAll('.image-option').forEach(option => {
-            option.addEventListener('click', async () => {
-                const selectedIndex = parseInt(option.dataset.index);
-                selections[assetType] = selectedIndex;
-
-                // Highlight selected option
-                modal.querySelectorAll('.image-option').forEach(opt => {
-                    opt.style.borderColor = 'transparent';
-                });
-                option.style.borderColor = '#ffff55';
-                option.style.background = 'rgba(255, 255, 85, 0.2)';
-
-                // Send selection to backend
-                await selectImage(assetType, selectedIndex);
-
-                // Small delay for visual feedback
-                await new Promise(resolve => setTimeout(resolve, 300));
-
-                // Move to next asset or close modal
-                if (currentAssetIndex < assetTypes.length - 1) {
-                    currentAssetIndex++;
-                    renderAssetSelection();
-                } else {
-                    // All selections complete
-                    document.body.removeChild(modal);
-                    addLogEntry('All textures selected. Resuming generation...');
-                    startPolling(); // Resume polling
-                }
-            });
-        });
-
-        // Regenerate button
-        const regenerateBtn = modal.querySelector('#regenerateBtn');
-        if (regenerateBtn) {
-            regenerateBtn.addEventListener('click', async () => {
-                regenerateBtn.disabled = true;
-                regenerateBtn.innerHTML = '<span class="btn-icon">⏳</span> Generating...';
-
-                try {
-                    await regenerateImages(assetType);
-                    // Re-fetch job status to get new images
-                    const response = await fetch(`${API_BASE_URL}/status/${currentJobId}`);
-                    const job = await response.json();
-                    pendingImageSelection = job.pendingImageSelection;
-                    renderAssetSelection();
-                } catch (error) {
-                    alert('Failed to regenerate images: ' + error.message);
-                    regenerateBtn.disabled = false;
-                    regenerateBtn.innerHTML = '<span class="btn-icon">🔄</span> Regenerate 5 More';
-                }
-            });
-        }
-
-        // Back button
-        const backBtn = modal.querySelector('#backBtn');
-        if (backBtn) {
-            backBtn.addEventListener('click', () => {
-                currentAssetIndex--;
-                renderAssetSelection();
-            });
-        }
-    }
-
-    renderAssetSelection();
-    document.body.appendChild(modal);
-}
-
-// Select image
-async function selectImage(assetType, selectedIndex) {
-    try {
-        const response = await fetch(`${API_BASE_URL}/jobs/${currentJobId}/select-image`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ assetType, selectedIndex })
-        });
-
-        if (!response.ok) {
-            throw new Error('Failed to select image');
-        }
-
-        addLogEntry(`Selected ${assetType} texture #${selectedIndex + 1}`);
-    } catch (error) {
-        console.error('Error selecting image:', error);
-        throw error;
-    }
-}
-
-// Regenerate images
-async function regenerateImages(assetType) {
-    try {
-        const response = await fetch(`${API_BASE_URL}/jobs/${currentJobId}/regenerate-images`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ assetType })
-        });
-
-        if (!response.ok) {
-            throw new Error('Failed to regenerate images');
-        }
-
-        addLogEntry(`Regenerated ${assetType} textures`);
-    } catch (error) {
-        console.error('Error regenerating images:', error);
-        throw error;
-    }
-}
+// Image selection modal logic removed - V2 API doesn't support image selection
+// The V2 pipeline automatically generates and selects textures
 
 // Show result
 function showResult(result) {
     if (emptyState) emptyState.style.display = 'none';
     if (resultCard) resultCard.style.display = 'block';
-
-    const decisions = result.aiDecisions;
 
     const resultName = document.getElementById('resultName');
     const resultId = document.getElementById('resultId');
@@ -372,26 +215,26 @@ function showResult(result) {
     const resultCode = document.getElementById('resultCode');
     const detailSection = document.getElementById('detailSection');
 
-    if (resultName) resultName.textContent = decisions.itemName;
-    if (resultId) resultId.textContent = `${decisions.modId}:${decisions.itemId}`;
+    // V2 result format
+    if (resultName) resultName.textContent = result.modName || 'Mod Generated';
+    if (resultId) resultId.textContent = result.modId || 'N/A';
 
-    // Tags
+    // Tags - simplified for V2
     if (resultTags) {
-        const tagsHtml = `
-            <span class="tag rarity-${decisions.properties.rarity.toLowerCase()}">${decisions.properties.rarity}</span>
-            <span class="tag">${decisions.properties.creativeTab.replace('_', ' ')}</span>
+        resultTags.innerHTML = `
+            <span class="tag">V2 Pipeline</span>
+            <span class="tag">Spec ${result.specVersion || '1.0'}</span>
         `;
-        resultTags.innerHTML = tagsHtml;
     }
 
-    // Show texture
-    if (result.textureBase64 && resultIcon) {
-        resultIcon.innerHTML = `<img src="data:image/png;base64,${result.textureBase64}" alt="${decisions.itemName}" style="width: 100%; image-rendering: pixelated;">`;
+    // Icon placeholder - V2 doesn't return texture in result
+    if (resultIcon) {
+        resultIcon.innerHTML = `<div style="width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: var(--mc-gray);">✓</div>`;
     }
 
     // Code section
     if (resultCode) {
-        resultCode.textContent = `// ${decisions.modName} generated successfully!\n// Download the .jar file to add to your Minecraft mods folder.`;
+        resultCode.textContent = `// ${result.modName || 'Mod'} generated successfully!\n// Download the .jar file to add to your Minecraft mods folder.`;
     }
 
     // Detail section
@@ -401,24 +244,24 @@ function showResult(result) {
             <div class="detail-grid">
                 <div class="detail-item">
                     <span class="detail-label">Mod ID:</span>
-                    <span class="detail-value">${decisions.modId}</span>
+                    <span class="detail-value">${result.modId || 'N/A'}</span>
                 </div>
                 <div class="detail-item">
-                    <span class="detail-label">Author:</span>
-                    <span class="detail-value">${decisions.author || 'AI Generator'}</span>
+                    <span class="detail-label">Mod Name:</span>
+                    <span class="detail-value">${result.modName || 'N/A'}</span>
                 </div>
                 <div class="detail-item">
-                    <span class="detail-label">Max Stack:</span>
-                    <span class="detail-value">${decisions.properties.maxStackSize}</span>
+                    <span class="detail-label">JAR File:</span>
+                    <span class="detail-value">${result.jarFile || 'N/A'}</span>
                 </div>
                 <div class="detail-item">
-                    <span class="detail-label">Fireproof:</span>
-                    <span class="detail-value">${decisions.properties.fireproof ? 'Yes 🔥' : 'No'}</span>
+                    <span class="detail-label">Spec Version:</span>
+                    <span class="detail-value">${result.specVersion || 'N/A'}</span>
                 </div>
             </div>
             ${result.downloadUrl ? `
-                <a href="${BACKEND_BASE_URL}${result.downloadUrl}" download="${decisions.modId}.jar" class="btn-download">
-                    <span class="btn-icon">⬇</span> Download ${decisions.modName}.jar
+                <a href="${BACKEND_BASE_URL}${result.downloadUrl}" download="${result.jarFile || result.modId + '.jar'}" class="btn-download">
+                    <span class="btn-icon">⬇</span> Download ${result.jarFile || 'mod.jar'}
                 </a>
             ` : ''}
         `;
