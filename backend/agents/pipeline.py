@@ -64,7 +64,7 @@ class ModGenerationPipeline:
 
         # Initialize components
         self.orchestrator = Orchestrator()
-        self.spec_manager = SpecManager(self.workspace_dir / "spec")
+        self.spec_manager = SpecManager(self.workspace_dir)
         self.compiler = Compiler()
         self.planner = Planner()
         self.validator = Validator()

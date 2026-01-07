@@ -39,33 +39,33 @@ class Planner:
         tasks = []
         self.task_counter = 0
 
-        # Phase 1: Setup tasks
+        # Phase 1: Setup workspace
         setup_task = self._create_setup_task(ir)
         tasks.append(setup_task)
 
-        # Phase 2: Asset generation tasks
+        # Phase 2: Generate textures (can run in parallel)
         texture_tasks = self._create_texture_generation_tasks(ir)
         tasks.extend(texture_tasks)
 
-        # Phase 3: Code generation tasks (depend on setup)
-        code_tasks = self._create_code_generation_tasks(ir, setup_task.task_id)
-        tasks.extend(code_tasks)
+        # Phase 3: Generate Java code (depends on setup)
+        code_task = self._create_code_generation_task(ir, setup_task.task_id)
+        tasks.append(code_task)
 
-        # Phase 4: Asset writing tasks (depend on textures)
-        asset_tasks = self._create_asset_writing_tasks(ir, [t.task_id for t in texture_tasks])
-        tasks.extend(asset_tasks)
+        # Phase 4: Generate assets (depends on textures)
+        assets_task = self._create_assets_generation_task(ir, [t.task_id for t in texture_tasks])
+        tasks.append(assets_task)
 
-        # Phase 5: Build config tasks (depend on setup)
-        build_config_task = self._create_build_config_task(ir, setup_task.task_id)
-        tasks.append(build_config_task)
+        # Phase 5: Generate build configuration (depends on setup)
+        config_tasks = self._create_build_config_tasks(ir, setup_task.task_id)
+        tasks.extend(config_tasks)
 
-        # Phase 6: Validation task (depends on all code + assets)
-        all_gen_tasks = code_tasks + asset_tasks
-        validation_task = self._create_validation_task(ir, [t.task_id for t in all_gen_tasks] + [build_config_task.task_id])
-        tasks.append(validation_task)
+        # Phase 6: Setup Gradle wrapper (depends on setup)
+        gradle_wrapper_task = self._create_gradle_wrapper_task(ir, setup_task.task_id)
+        tasks.append(gradle_wrapper_task)
 
-        # Phase 7: Build task (depends on validation)
-        build_task = self._create_build_task(ir, validation_task.task_id)
+        # Phase 7: Build mod (depends on everything)
+        all_task_ids = [t.task_id for t in tasks]
+        build_task = self._create_build_task(ir, all_task_ids)
         tasks.append(build_task)
 
         # Create DAG
@@ -94,15 +94,15 @@ class Planner:
             task_type="setup",
             tool_calls=[
                 ToolCall(
-                    tool_name="workspace_setup",
+                    tool_name="setup_workspace",
                     parameters={
                         "mod_id": ir.mod_id,
-                        "base_package": ir.base_package
+                        "package_name": ir.base_package
                     }
                 )
             ],
-            inputs={"ir": ir.dict()},
-            expected_outputs={"workspace_dir": f"generated/{ir.mod_id}"},
+            inputs={},
+            expected_outputs={"workspace_path": f"generated/{ir.mod_id}"},
             parallelizable=False,
             priority=100
         )
@@ -111,241 +111,212 @@ class Planner:
         """Create texture generation tasks (can run in parallel)"""
         tasks = []
 
-        # Collect all texture assets
-        texture_assets = []
+        # Collect all items/blocks/tools that need textures
+        entities = []
         for item in ir.items:
-            texture_assets.append(("item", item.item_id, item.texture_asset))
+            entities.append(("item", item.item_name, item.item_id, item.description))
         for block in ir.blocks:
-            texture_assets.append(("block", block.block_id, block.texture_asset))
+            entities.append(("block", block.block_name, block.block_id, block.description))
         for tool in ir.tools:
-            texture_assets.append(("tool", tool.tool_id, tool.texture_asset))
+            entities.append(("tool", tool.tool_name, tool.tool_id, tool.description))
 
-        for asset_type, entity_id, asset in texture_assets:
+        for entity_type, name, entity_id, description in entities:
             task = Task(
                 task_id=self._next_task_id(),
-                description=f"Generate texture for {entity_id}",
+                description=f"Generate texture for {name}",
                 task_type="generate_texture",
                 tool_calls=[
                     ToolCall(
-                        tool_name="image_generator",
+                        tool_name="generate_texture",
                         parameters={
-                            "prompt": asset.texture_generation_prompt,
-                            "reference_ids": asset.texture_reference_ids,
-                            "output_path": asset.file_path
+                            "item_name": name,
+                            "description": description,
+                            "variant_count": 3
                         }
                     )
                 ],
-                inputs={"asset": asset.dict()},
-                expected_outputs={"texture_file": asset.file_path},
-                parallelizable=True,  # Textures can generate in parallel
+                inputs={"entity_id": entity_id, "entity_type": entity_type},
+                expected_outputs={"texture_variants": []},
+                parallelizable=True,
                 priority=80
             )
             tasks.append(task)
 
         return tasks
 
-    def _create_code_generation_tasks(self, ir: ModIR, depends_on: str) -> List[Task]:
-        """Create Java code generation tasks"""
-        tasks = []
+    def _create_code_generation_task(self, ir: ModIR, depends_on: str) -> Task:
+        """Create Java code generation task (generates all code at once)"""
+        # Convert IR items/blocks/tools to dict format for the tool
+        items_data = [item.dict() for item in ir.items]
+        blocks_data = [block.dict() for block in ir.blocks]
+        tools_data = [tool.dict() for tool in ir.tools]
 
-        # Main mod class
-        task = Task(
+        return Task(
             task_id=self._next_task_id(),
-            description=f"Generate main mod class: {ir.main_class_name}",
+            description=f"Generate Java code for {ir.mod_name}",
             task_type="generate_code",
             dependencies=[depends_on],
             tool_calls=[
                 ToolCall(
-                    tool_name="code_generator",
+                    tool_name="generate_java_code",
                     parameters={
-                        "template": "main_mod_class",
-                        "ir": ir.dict()
+                        "workspace_path": f"generated/{ir.mod_id}",
+                        "package_name": ir.base_package,
+                        "mod_id": ir.mod_id,
+                        "main_class_name": ir.main_class_name,
+                        "items": items_data,
+                        "blocks": blocks_data,
+                        "tools": tools_data
                     }
                 )
             ],
             inputs={"ir": ir.dict()},
-            expected_outputs={"java_file": f"src/main/java/{ir.base_package.replace('.', '/')}/{ir.main_class_name}.java"},
+            expected_outputs={"main_class_path": "src/main/java/..."},
             priority=70
         )
-        tasks.append(task)
 
-        # Item classes
-        for item in ir.items:
-            task = Task(
-                task_id=self._next_task_id(),
-                description=f"Generate item class: {item.java_class_name}",
-                task_type="generate_code",
-                dependencies=[depends_on],
-                tool_calls=[
-                    ToolCall(
-                        tool_name="code_generator",
-                        parameters={
-                            "template": "item_class",
-                            "item": item.dict()
-                        }
-                    )
-                ],
-                inputs={"item": item.dict()},
-                expected_outputs={"java_file": f"src/main/java/{item.java_package.replace('.', '/')}/{item.java_class_name}.java"},
-                parallelizable=True,
-                priority=60
-            )
-            tasks.append(task)
+    def _create_assets_generation_task(self, ir: ModIR, depends_on: List[str]) -> Task:
+        """Create assets generation task (generates all resource files)"""
+        items_data = [item.dict() for item in ir.items]
+        blocks_data = [block.dict() for block in ir.blocks]
+        tools_data = [tool.dict() for tool in ir.tools]
 
-        # Block classes
-        for block in ir.blocks:
-            task = Task(
-                task_id=self._next_task_id(),
-                description=f"Generate block class: {block.java_class_name}",
-                task_type="generate_code",
-                dependencies=[depends_on],
-                tool_calls=[
-                    ToolCall(
-                        tool_name="code_generator",
-                        parameters={
-                            "template": "block_class",
-                            "block": block.dict()
-                        }
-                    )
-                ],
-                inputs={"block": block.dict()},
-                expected_outputs={"java_file": f"src/main/java/{block.java_package.replace('.', '/')}/{block.java_class_name}.java"},
-                parallelizable=True,
-                priority=60
-            )
-            tasks.append(task)
+        # Placeholder textures dict - will be populated by texture generation tasks
+        textures = {}
 
-        # Tool classes
-        for tool in ir.tools:
-            task = Task(
-                task_id=self._next_task_id(),
-                description=f"Generate tool class: {tool.java_class_name}",
-                task_type="generate_code",
-                dependencies=[depends_on],
-                tool_calls=[
-                    ToolCall(
-                        tool_name="code_generator",
-                        parameters={
-                            "template": "tool_class",
-                            "tool": tool.dict()
-                        }
-                    )
-                ],
-                inputs={"tool": tool.dict()},
-                expected_outputs={"java_file": f"src/main/java/{tool.java_package.replace('.', '/')}/{tool.java_class_name}.java"},
-                parallelizable=True,
-                priority=60
-            )
-            tasks.append(task)
-
-        return tasks
-
-    def _create_asset_writing_tasks(self, ir: ModIR, depends_on: List[str]) -> List[Task]:
-        """Create asset file writing tasks"""
-        tasks = []
-
-        # Group assets by type
-        json_assets = [a for a in ir.assets if a.asset_type in ["model", "blockstate", "recipe", "loot_table"]]
-
-        # Create tasks for JSON assets
-        for asset in json_assets:
-            task = Task(
-                task_id=self._next_task_id(),
-                description=f"Write {asset.asset_type}: {asset.file_path}",
-                task_type="write_asset",
-                dependencies=depends_on if asset.asset_type == "texture" else [],
-                tool_calls=[
-                    ToolCall(
-                        tool_name="asset_writer",
-                        parameters={
-                            "file_path": asset.file_path,
-                            "content": asset.json_content
-                        }
-                    )
-                ],
-                inputs={"asset": asset.dict()},
-                expected_outputs={"asset_file": asset.file_path},
-                parallelizable=True,
-                priority=50
-            )
-            tasks.append(task)
-
-        # Lang files (merge all lang entries)
-        lang_task = Task(
+        return Task(
             task_id=self._next_task_id(),
-            description="Write language files",
-            task_type="write_asset",
+            description=f"Generate assets for {ir.mod_name}",
+            task_type="generate_assets",
+            dependencies=depends_on,
             tool_calls=[
                 ToolCall(
-                    tool_name="lang_merger",
+                    tool_name="generate_assets",
                     parameters={
-                        "ir": ir.dict()
+                        "workspace_path": f"generated/{ir.mod_id}",
+                        "mod_id": ir.mod_id,
+                        "items": items_data,
+                        "blocks": blocks_data,
+                        "tools": tools_data,
+                        "textures": textures
                     }
                 )
             ],
             inputs={"ir": ir.dict()},
-            expected_outputs={"lang_file": f"assets/{ir.mod_id}/lang/en_us.json"},
-            priority=50
+            expected_outputs={"assets_path": "src/main/resources/assets"},
+            priority=60
         )
-        tasks.append(lang_task)
 
-        return tasks
+    def _create_build_config_tasks(self, ir: ModIR, depends_on: str) -> List[Task]:
+        """Create build configuration tasks"""
+        tasks = []
 
-    def _create_build_config_task(self, ir: ModIR, depends_on: str) -> Task:
-        """Create build configuration task"""
-        return Task(
+        # Generate Gradle files
+        gradle_task = Task(
             task_id=self._next_task_id(),
-            description="Generate build configuration files",
+            description="Generate Gradle build files",
             task_type="generate_config",
             dependencies=[depends_on],
             tool_calls=[
                 ToolCall(
-                    tool_name="config_generator",
+                    tool_name="generate_gradle_files",
                     parameters={
-                        "ir": ir.dict()
+                        "workspace_path": f"generated/{ir.mod_id}",
+                        "mod_id": ir.mod_id,
+                        "mod_name": ir.mod_name,
+                        "version": ir.version,
+                        "minecraft_version": ir.minecraft_version,
+                        "dependencies": []
                     }
                 )
             ],
             inputs={"ir": ir.dict()},
-            expected_outputs={
-                "gradle_build": "build.gradle",
-                "gradle_properties": "gradle.properties",
-                "fabric_mod_json": "src/main/resources/fabric.mod.json"
-            },
+            expected_outputs={"build_gradle": "build.gradle"},
             priority=60
         )
+        tasks.append(gradle_task)
 
-    def _create_validation_task(self, ir: ModIR, depends_on: List[str]) -> Task:
-        """Create pre-build validation task"""
-        return Task(
+        # Generate fabric.mod.json
+        fabric_json_task = Task(
             task_id=self._next_task_id(),
-            description="Validate generated mod structure",
-            task_type="validate",
-            dependencies=depends_on,
-            tool_calls=[
-                ToolCall(
-                    tool_name="validator",
-                    parameters={
-                        "ir": ir.dict()
-                    }
-                )
-            ],
-            inputs={"ir": ir.dict()},
-            expected_outputs={"validation_report": "validation_report.json"},
-            priority=40
-        )
-
-    def _create_build_task(self, ir: ModIR, depends_on: str) -> Task:
-        """Create Gradle build task"""
-        return Task(
-            task_id=self._next_task_id(),
-            description="Compile mod with Gradle",
-            task_type="build",
+            description="Generate fabric.mod.json",
+            task_type="generate_config",
             dependencies=[depends_on],
             tool_calls=[
                 ToolCall(
-                    tool_name="gradle_builder",
+                    tool_name="generate_fabric_mod_json",
                     parameters={
+                        "workspace_path": f"generated/{ir.mod_id}",
+                        "mod_id": ir.mod_id,
+                        "mod_name": ir.mod_name,
+                        "version": ir.version,
+                        "description": ir.description,
+                        "authors": ir.authors,
+                        "license": "MIT"
+                    }
+                )
+            ],
+            inputs={"ir": ir.dict()},
+            expected_outputs={"fabric_mod_json": "src/main/resources/fabric.mod.json"},
+            priority=60
+        )
+        tasks.append(fabric_json_task)
+
+        # Generate mixins.json
+        mixins_task = Task(
+            task_id=self._next_task_id(),
+            description="Generate mixins.json",
+            task_type="generate_config",
+            dependencies=[depends_on],
+            tool_calls=[
+                ToolCall(
+                    tool_name="generate_mixins_json",
+                    parameters={
+                        "workspace_path": f"generated/{ir.mod_id}",
+                        "package_name": ir.base_package
+                    }
+                )
+            ],
+            inputs={"ir": ir.dict()},
+            expected_outputs={"mixins_json": "src/main/resources/mixins.json"},
+            priority=60
+        )
+        tasks.append(mixins_task)
+
+        return tasks
+
+    def _create_gradle_wrapper_task(self, ir: ModIR, depends_on: str) -> Task:
+        """Create Gradle wrapper setup task"""
+        return Task(
+            task_id=self._next_task_id(),
+            description="Setup Gradle wrapper",
+            task_type="setup",
+            dependencies=[depends_on],
+            tool_calls=[
+                ToolCall(
+                    tool_name="setup_gradle_wrapper",
+                    parameters={
+                        "workspace_path": f"generated/{ir.mod_id}"
+                    }
+                )
+            ],
+            inputs={},
+            expected_outputs={"gradle_wrapper": "gradle/wrapper"},
+            priority=50
+        )
+
+    def _create_build_task(self, ir: ModIR, depends_on: List[str]) -> Task:
+        """Create Gradle build task"""
+        return Task(
+            task_id=self._next_task_id(),
+            description="Build mod with Gradle",
+            task_type="build",
+            dependencies=depends_on,
+            tool_calls=[
+                ToolCall(
+                    tool_name="build_mod",
+                    parameters={
+                        "workspace_path": f"generated/{ir.mod_id}",
                         "mod_id": ir.mod_id
                     }
                 )
