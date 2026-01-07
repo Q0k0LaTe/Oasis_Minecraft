@@ -20,7 +20,10 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String(50), unique=True, nullable=False, index=True)
     email = Column(String(255), unique=True, nullable=False, index=True)
-    password_hash = Column(String(255), nullable=False)  # bcrypt hashed password
+    password_hash = Column(String(255), nullable=True)  # bcrypt hashed password (nullable for Google OAuth users)
+    google_id = Column(String(255), unique=True, nullable=True, index=True)  # Google account unique identifier
+    auth_provider = Column(String(20), default='email', nullable=False)  # 'email' or 'google'
+    avatar_url = Column(String(500), nullable=True)  # User avatar URL from Google
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     is_active = Column(Boolean, default=True)

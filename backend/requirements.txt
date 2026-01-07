@@ -15,6 +15,7 @@ langchain-community==0.2.17
 langchain-openai==0.1.20
 google-generativeai==0.5.2
 langchain-google-genai==1.0.6
+google-genai==1.56.0
 
 # Database dependencies
 sqlalchemy==2.0.23
@@ -27,3 +28,7 @@ resend==2.4.0  # Resend email service (replaces fastapi-mail)
 redis==5.0.1
 email-validator==2.1.0
 # fastapi-mail==1.4.1  # 已弃用，改用 Resend
+
+# Google OAuth dependencies
+google-auth==2.27.0
+google-auth-oauthlib==1.2.0

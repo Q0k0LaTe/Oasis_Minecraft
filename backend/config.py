@@ -119,3 +119,8 @@ MAIL_FROM_NAME = os.getenv("MAIL_FROM_NAME", "Minecraft Mod Generator")
 # Verification Code Configuration
 VERIFICATION_CODE_EXPIRE_MINUTES = int(os.getenv("VERIFICATION_CODE_EXPIRE_MINUTES", "10"))  # Code expires in 10 minutes
 VERIFICATION_CODE_LENGTH = int(os.getenv("VERIFICATION_CODE_LENGTH", "6"))  # 6-digit code
+
+# Google OAuth Configuration
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
+# Note: GOOGLE_CLIENT_SECRET is not required for ID token verification
+# We only need CLIENT_ID to verify tokens from Google
