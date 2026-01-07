@@ -155,8 +155,18 @@ class SpecManager:
         current = data
         for i, part in enumerate(path_parts[:-1]):
             if part.isdigit():
-                # Array index
-                current = current[int(part)]
+                # Array index - extend list if needed
+                idx = int(part)
+                if isinstance(current, list):
+                    # Determine what type of object to create based on next part
+                    next_part = path_parts[i + 1] if i + 1 < len(path_parts) else None
+                    while len(current) <= idx:
+                        # Create appropriate structure for the new element
+                        if next_part and next_part.isdigit():
+                            current.append([])
+                        else:
+                            current.append({})
+                current = current[idx]
             else:
                 # Object key
                 if part not in current:
@@ -168,7 +178,14 @@ class SpecManager:
         # Set the final value
         final_key = path_parts[-1]
         if final_key.isdigit():
-            current[int(final_key)] = value
+            idx = int(final_key)
+            if isinstance(current, list):
+                # Extend list if needed
+                while len(current) <= idx:
+                    current.append(None)
+                current[idx] = value
+            else:
+                current[idx] = value
         else:
             current[final_key] = value
 
