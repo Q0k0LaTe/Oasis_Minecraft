@@ -147,12 +147,36 @@ class SpecManager:
             value = delta.value
             if path_parts and path_parts[-1] == "creative_tab":
                 value = normalize_creative_tab(delta.value).value
-            self._set_nested_value(spec_dict, path_parts, value)
+
+            # For arrays (items, blocks, tools), append to the end
+            if len(path_parts) >= 2 and path_parts[0] in ("items", "blocks", "tools"):
+                array_name = path_parts[0]
+                # If path is like "items[N]" where N is the next index, append
+                if len(path_parts) == 2 and path_parts[1].isdigit():
+                    idx = int(path_parts[1])
+                    if idx == len(spec_dict[array_name]):
+                        # Appending to end
+                        spec_dict[array_name].append(value)
+                    else:
+                        # Inserting at specific index
+                        self._set_nested_value(spec_dict, path_parts, value)
+                else:
+                    # Path like "items[N].property", set the nested value
+                    self._set_nested_value(spec_dict, path_parts, value)
+            else:
+                # For non-array fields, just set the value
+                self._set_nested_value(spec_dict, path_parts, value)
+
         elif delta.operation == "update":
+            # Update requires the path to exist
+            if not self._path_exists(spec_dict, path_parts):
+                raise ValueError(f"Cannot update non-existent path: {delta.path}")
+
             value = delta.value
             if path_parts and path_parts[-1] == "creative_tab":
                 value = normalize_creative_tab(delta.value).value
             self._set_nested_value(spec_dict, path_parts, value)
+
         elif delta.operation == "remove":
             self._remove_nested_value(spec_dict, path_parts)
         else:
@@ -273,6 +297,27 @@ class SpecManager:
         # Replace [N] with .N for easier splitting
         path = re.sub(r'\[(\d+)\]', r'.\1', path)
         return path.split('.')
+
+    def _path_exists(self, data: Dict, path_parts: List[str]) -> bool:
+        """Check if a path exists in the data structure"""
+        try:
+            current = data
+            for part in path_parts:
+                if part.isdigit():
+                    idx = int(part)
+                    if isinstance(current, list):
+                        if idx >= len(current):
+                            return False
+                        current = current[idx]
+                    else:
+                        return False
+                else:
+                    if part not in current:
+                        return False
+                    current = current[part]
+            return True
+        except (KeyError, IndexError, TypeError):
+            return False
 
     def _set_nested_value(self, data: Dict, path_parts: List[str], value: Any):
         """Set a value at a nested path"""

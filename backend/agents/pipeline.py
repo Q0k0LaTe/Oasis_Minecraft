@@ -141,7 +141,7 @@ class ModGenerationPipeline:
 
             log(f"✓ Current spec version: {current_spec.version}")
             log(f"  - Mod: {current_spec.mod_name} (v{current_spec.version})")
-            log(f"  - Items: {len(current_spec.items)}, Blocks: {len(current_spec.blocks)}")
+            log(f"  - Items: {len(current_spec.items)}, Blocks: {len(current_spec.blocks)}, Tools: {len(current_spec.tools)}")
 
             # Phase 3: Compiler - Transform Spec → IR
             log("Phase 3: Compiling specification to intermediate representation...")
