@@ -102,3 +102,7 @@ Desktop.ini
 *_key.txt
 secrets/
 credentials/
+
+# API Docs
+docs/
+api_docs/
