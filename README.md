@@ -52,6 +52,7 @@ That's it! The script will:
 - **Frontend**: http://localhost:8000
 - **Backend API**: http://localhost:3000
 - **API Docs**: http://localhost:3000/docs
+- **V2 API Endpoint**: http://localhost:3000/api/v2/generate (recommended)
 
 ## 🎮 How to Use
 
@@ -99,39 +100,86 @@ Launch Minecraft 1.21 with Fabric and enjoy your custom item!
 
 ## 🏗️ Architecture
 
+### V2 Architecture (Recommended - Compiler-Style Pipeline)
+
+The new V2 architecture follows compiler design patterns for reliability and debuggability:
+
 ```
 ┌─────────────┐
-│   Frontend  │  Simple prompt interface (Minecraft-styled)
+│   Frontend  │  Minecraft-styled UI
 │ (HTML/JS)   │
 └──────┬──────┘
-       │ HTTP POST /api/generate-mod
+       │ HTTP POST /api/v2/generate
+       ▼
+┌─────────────────────────────────────────────────────────┐
+│                    Backend Pipeline                      │
+│                                                          │
+│  User Prompt                                            │
+│       │                                                  │
+│       ▼                                                  │
+│  1. Orchestrator ──────▶ Converts prompt to SpecDelta   │
+│       │                  (LLM reasoning happens here)   │
+│       ▼                                                  │
+│  2. SpecManager ───────▶ Applies delta to canonical spec│
+│       │                  (Versioned, persistent)        │
+│       ▼                                                  │
+│  3. Compiler ──────────▶ Transforms Spec → IR           │
+│       │                  (Fills defaults, generates IDs)│
+│       ▼                                                  │
+│  4. Planner ───────────▶ Builds Task DAG from IR        │
+│       │                  (Dependency graph)             │
+│       ▼                                                  │
+│  5. Executor ──────────▶ Runs tasks using tools         │
+│       │                  (Deterministic generation)     │
+│       ▼                                                  │
+│  6. Validator ─────────▶ Pre-build validation           │
+│       │                  (Checks for errors)            │
+│       ▼                                                  │
+│  7. Builder ───────────▶ Gradle compilation              │
+│       │                  (Produces JAR)                 │
+│       ▼                                                  │
+│  8. Error Fixer ───────▶ Deterministic error patches    │
+│                          (If needed)                     │
+└───────────────────────┬─────────────────────────────────┘
+                        │
+                        ▼
+                   .jar file
+```
+
+**Key Principles:**
+1. **Spec is for humans. IR is for machines.** - Clear separation of concerns
+2. **No code generation without IR.** - All generation flows through fully specified IR
+3. **Generators must be dumb and deterministic.** - Same input always produces same output
+4. **All reasoning happens before execution.** - Orchestrator/Compiler handle AI, Executor is mechanical
+5. **Errors trigger patches, not retries.** - Deterministic error fixing
+
+### V1 Architecture (Legacy - For Reference)
+
+```
+┌─────────────┐
+│   Frontend  │
+│ (HTML/JS)   │
+└──────┬──────┘
+       │ HTTP POST /api/generate-mod (Legacy V1)
        ▼
 ┌─────────────┐
-│   Backend   │  FastAPI Server
+│   Backend   │
 │  (Python)   │
 └──────┬──────┘
        │
        ├──▶ 1. LangChain Multi-Agent Pipeline (Gemini)
-       │      Stage 1: NamingAgent → mod_name, mod_id, item_name, item_id
-       │      Stage 2: PropertiesAgent → rarity, stack size, etc.
-       │      Stage 3: BlockAgent → companion block (optional)
-       │      Stage 4: ToolAgent → companion tool (optional)
-       │      Returns structured JSON specification
+       │      Directly generates code (no IR)
        │
        ├──▶ 2. ImageGenerator (Gemini)
-       │      Generates 5 texture options (16x16 pixel art)
-       │      User selects favorite from modal
+       │      5 texture options
        │
        ├──▶ 3. ModGenerator
-       │      Creates Java files, assets, configs
-       │      Integrates AI-generated texture
+       │      Monolithic generator
        │
-       ├──▶ 4. Gradle Compiler
-       │      Compiles Fabric mod → .jar file
-       │
-       └──▶ 5. Download
-              Returns .jar to user
+       └──▶ 4. Gradle Compiler
 ```
+
+**Note:** V1 API (`/api/generate-mod`) is maintained for backward compatibility. All new features use V2 (`/api/v2/generate`).
 
 ## 📁 Project Structure
 
@@ -140,7 +188,9 @@ mcmoddemo/
 ├── .env                           # Gemini API key (in backend/)
 ├── START.sh                       # Startup script
 ├── README.md                      # This file
-├── WORKFLOW_DESIGN.md             # New structured decision pipeline architecture
+├── WORKFLOW_DESIGN.md             # Architecture design document
+├── AGENT_RESTRUCTURE_PLAN.md      # Migration plan
+├── AGENT_RESTRUCTURE_STATUS.md    # Implementation status
 │
 ├── frontend/                      # Web interface
 │   ├── index.html                 # Main page
@@ -154,14 +204,61 @@ mcmoddemo/
     ├── config.py                  # Configuration
     ├── models.py                  # Data models
     ├── requirements.txt           # Dependencies
-    ├── agents/
-    │   ├── decision_workflow.py   # New structured JSON pipeline
-    │   ├── langchain_agents.py    # Multi-agent orchestration
-    │   ├── mod_analyzer.py        # Legacy analyzer with fallbacks
-    │   ├── image_generator.py     # Texture generator
-    │   └── mod_generator.py       # Java/Gradle code generator
-    ├── generated/                 # Temporary mod projects
-    └── downloads/                 # Compiled .jar files
+    │
+    ├── agents/                    # NEW: V2 Architecture
+    │   ├── pipeline.py           # 🆕 Main pipeline orchestrator
+    │   │
+    │   ├── core/                 # 🆕 Core components
+    │   │   ├── orchestrator.py   # Prompt → SpecDelta
+    │   │   ├── spec_manager.py   # Canonical spec with versioning
+    │   │   ├── compiler.py       # Spec → IR transformation
+    │   │   ├── planner.py        # IR → Task DAG
+    │   │   ├── executor.py       # Task execution engine
+    │   │   ├── validator.py      # Pre-build validation
+    │   │   ├── builder.py        # Gradle compilation
+    │   │   └── error_fixer.py    # Error interpretation & fixing
+    │   │
+    │   ├── tools/                # 🆕 Tool implementations
+    │   │   ├── tool_registry.py  # Central tool registry
+    │   │   ├── workspace_tool.py # Directory structure
+    │   │   ├── gradle_tool.py    # Build configuration
+    │   │   ├── fabric_json_tool.py # Mod metadata
+    │   │   ├── java_code_tool.py # Java code generation
+    │   │   ├── asset_tool.py     # Asset generation
+    │   │   ├── mixins_tool.py    # Mixins config
+    │   │   ├── gradle_wrapper_tool.py # Gradle wrapper
+    │   │   ├── build_tool.py     # Compilation
+    │   │   ├── image_generator.py # AI texture generation
+    │   │   └── reference_selector.py # Texture reference AI
+    │   │
+    │   ├── schemas/              # 🆕 Data schemas
+    │   │   ├── spec_schema.py    # User intent format (ModSpec)
+    │   │   ├── ir_schema.py      # Machine blueprint (ModIR)
+    │   │   └── task_schema.py    # Execution plan (TaskDAG)
+    │   │
+    │   ├── _archive/             # 🗄️ Legacy files (V1)
+    │   │   ├── langchain_agents.py # Old multi-agent system
+    │   │   └── mod_analyzer.py   # Old analyzer
+    │   │
+    │   ├── mod_generator.py      # ⚠️ Legacy (V1 API only)
+    │   └── __init__.py           # Exports V1 + V2 components
+    │
+    ├── routers/
+    │   ├── jobs.py               # V1 API endpoints (legacy)
+    │   ├── jobs_v2.py            # 🆕 V2 API endpoints (recommended)
+    │   ├── auth.py               # Authentication
+    │   └── sessions.py           # Session management
+    │
+    ├── tests/                    # 🆕 Test suite
+    │   ├── agents/
+    │   │   ├── test_pipeline.py  # Pipeline integration tests
+    │   │   ├── test_compiler.py  # Compiler unit tests
+    │   │   ├── test_spec_manager.py # SpecManager tests
+    │   │   └── test_tools.py     # Tool tests
+    │   └── README.md
+    │
+    ├── generated/                # Temporary mod projects
+    └── downloads/                # Compiled .jar files
 ```
 
 ## 🤖 AI Workflow
@@ -378,9 +475,23 @@ If you change `MINECRAFT_VERSION`, either set `FABRIC_API_VERSION` yourself or u
 
 The backend will warn if it can't match your Minecraft version—set `FABRIC_API_VERSION` explicitly in that case.
 
-## 📝 TODO
+## 📝 Recent Updates
 
-- [x] Add texture generation with DALL-E 3 ✅
+### ✅ V2 Architecture (January 2026)
+- [x] Complete pipeline restructure following compiler design patterns
+- [x] Spec → IR → Task DAG architecture
+- [x] Tool registry system
+- [x] Deterministic code generation
+- [x] Comprehensive test suite
+- [x] V2 API endpoints (`/api/v2/generate`)
+- [x] AI-powered texture generation with Gemini 3 Pro
+- [x] 5-variant texture selection workflow
+- [x] Reference texture AI selection
+
+### 🚧 TODO
+
+- [ ] Migrate V1 features to V2 pipeline
+- [ ] Interactive texture selection in V2 API
 - [ ] Texture style options (realistic, cartoonish, pixel perfect)
 - [ ] Texture caching and reuse
 - [ ] Support multiple items per mod
@@ -388,11 +499,34 @@ The backend will warn if it can't match your Minecraft version—set `FABRIC_API
 - [ ] User accounts and mod history
 - [ ] Shareable mod links
 - [ ] Advanced properties (food values, durability, enchantments)
-- [ ] Block generation support
+- [ ] Enhanced block generation support
 - [ ] Recipe generation
 - [ ] Multi-version support (1.20.x, 1.21.x)
 - [ ] Animated textures
 - [ ] HD texture packs (32x32, 64x64)
+
+## 🧪 Testing
+
+Run the test suite:
+
+```bash
+cd backend
+pytest
+
+# With coverage
+pytest --cov=agents --cov-report=html
+
+# Run specific test
+pytest tests/agents/test_pipeline.py -v
+```
+
+## 📚 Documentation
+
+- **[WORKFLOW_DESIGN.md](WORKFLOW_DESIGN.md)** - Complete architecture design and principles
+- **[AGENT_RESTRUCTURE_PLAN.md](AGENT_RESTRUCTURE_PLAN.md)** - Migration plan from V1 to V2
+- **[AGENT_RESTRUCTURE_STATUS.md](AGENT_RESTRUCTURE_STATUS.md)** - Implementation progress
+- **[RESTRUCTURE_COMPLETE.md](RESTRUCTURE_COMPLETE.md)** - Final implementation summary
+- **[backend/tests/README.md](backend/tests/README.md)** - Testing guide
 
 ## 🙏 Credits
 

@@ -60,11 +60,15 @@ RESOURCE_PACK_FORMAT = int(os.getenv("RESOURCE_PACK_FORMAT", "34"))
 # AI Configuration - Using Gemini
 AI_MODEL = "gemini-2.0-flash-exp"  # Gemini model for text generation
 AI_TEMPERATURE = 0.7
+AI_REQUEST_TIMEOUT = float(os.getenv("AI_REQUEST_TIMEOUT", "120.0"))  # Timeout in seconds for AI requests
+AI_MAX_RETRIES = int(os.getenv("AI_MAX_RETRIES", "3"))  # Max retries for failed requests
 
-# Image Generation - Using Gemini Image Generation
-IMAGE_MODEL = "gemini-3-pro-image-preview"  # Pro model for better quality
+# Image Generation - Using Gemini 3 Pro Image Preview
+IMAGE_MODEL = "gemini-3-pro-image-preview"  # Gemini 3 Pro for texture generation with reference guidance
 IMAGE_SIZE = "1024x1024"  # Will be resized to 16x16
 IMAGE_QUALITY = "standard"  # standard or hd
+IMAGE_VARIANT_COUNT = 5  # Number of texture variants to generate for user selection
+IMAGE_GENERATION_TIMEOUT = float(os.getenv("IMAGE_GENERATION_TIMEOUT", "180.0"))  # Longer timeout for image generation
 
 # Server Configuration
 HOST = "0.0.0.0"
