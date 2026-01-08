@@ -27,7 +27,7 @@ bcrypt==4.1.1
 resend==2.4.0  # Resend email service (replaces fastapi-mail)
 redis==5.0.1
 email-validator==2.1.0
-# fastapi-mail==1.4.1  # 已弃用，改用 Resend
+# fastapi-mail==1.4.1  # depreciated, replaced by Resend
 
 # Google OAuth dependencies
 google-auth==2.27.0
