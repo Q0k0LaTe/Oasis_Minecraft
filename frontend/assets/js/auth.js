@@ -264,7 +264,9 @@ function hideLoginModal() {
 function showUsernameModal() {
     if (usernameModal) {
         usernameModal.style.display = 'flex';
-        usernameInput.focus();
+        if (usernameInput) {
+            usernameInput.focus();
+        }
     }
 }
 
@@ -272,7 +274,9 @@ function showUsernameModal() {
 function hideUsernameModal() {
     if (usernameModal) {
         usernameModal.style.display = 'none';
-        usernameForm.reset();
+        if (usernameForm) {
+            usernameForm.reset();
+        }
     }
 }
 
