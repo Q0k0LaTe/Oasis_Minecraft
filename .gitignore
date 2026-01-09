@@ -103,6 +103,10 @@ Desktop.ini
 secrets/
 credentials/
 
+# API Docs
+docs/
+api_docs/
+
 # Internal documentation (keep local only)
 TEXTURE_GENERATION_WORKFLOW.md
 IMPLEMENTATION_SUMMARY.md
@@ -111,3 +115,7 @@ AGENT_RESTRUCTURE_STATUS.md
 ALL_TASKS_COMPLETE.md
 AGENT_RESTRUCTURE_PLAN.md
 RESTRUCTURE_COMPLETE.md
+
+# API Docs
+docs/
+api_docs/
