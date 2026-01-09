@@ -10,6 +10,7 @@ Usage:
 """
 from pathlib import Path
 from typing import Dict, Any, Optional, Callable
+import json
 import traceback
 
 from config import GENERATED_DIR, DOWNLOADS_DIR
@@ -57,10 +58,12 @@ class ModGenerationPipeline:
         self.job_id = job_id
         self.workspace_dir = workspace_dir or (GENERATED_DIR / job_id)
         self.downloads_dir = downloads_dir or DOWNLOADS_DIR
+        self.artifacts_dir = self.workspace_dir / "artifacts"
 
         # Ensure directories exist
         self.workspace_dir.mkdir(parents=True, exist_ok=True)
         self.downloads_dir.mkdir(parents=True, exist_ok=True)
+        self.artifacts_dir.mkdir(parents=True, exist_ok=True)
 
         # Initialize components
         self.orchestrator = Orchestrator()
@@ -113,6 +116,7 @@ class ModGenerationPipeline:
                 current_spec=None,
                 context=None  # TODO: Build context from conversation_history
             )
+            self._write_json("phase1_orchestrator_response.json", orchestrator_response.model_dump())
             log(f"✓ Generated {len(orchestrator_response.deltas)} deltas")
             if orchestrator_response.requires_user_input:
                 log(f"⚠ Clarifying questions: {orchestrator_response.clarifying_questions}")
@@ -132,14 +136,17 @@ class ModGenerationPipeline:
             current_spec = None
             for spec_delta in orchestrator_response.deltas:
                 current_spec = self.spec_manager.apply_delta(spec_delta)
+            if current_spec:
+                self._write_json("phase2_mod_spec.json", current_spec.model_dump())
 
             log(f"✓ Current spec version: {current_spec.version}")
             log(f"  - Mod: {current_spec.mod_name} (v{current_spec.version})")
-            log(f"  - Items: {len(current_spec.items)}, Blocks: {len(current_spec.blocks)}")
+            log(f"  - Items: {len(current_spec.items)}, Blocks: {len(current_spec.blocks)}, Tools: {len(current_spec.tools)}")
 
             # Phase 3: Compiler - Transform Spec → IR
             log("Phase 3: Compiling specification to intermediate representation...")
             mod_ir = self.compiler.compile(current_spec)
+            self._write_json("phase3_mod_ir.json", mod_ir.model_dump())
             log(f"✓ Generated IR with {len(mod_ir.items)} items, {len(mod_ir.blocks)} blocks")
             log(f"  - Base package: {mod_ir.base_package}")
             log(f"  - Main class: {mod_ir.main_class_name}")
@@ -147,6 +154,7 @@ class ModGenerationPipeline:
             # Phase 4: Planner - Convert IR → Task DAG
             log("Phase 4: Planning execution tasks...")
             task_dag = self.planner.plan(mod_ir, workspace_root=self.workspace_dir)
+            self._write_json("phase4_task_dag.json", task_dag.model_dump())
             log(f"✓ Generated execution plan with {task_dag.total_tasks} tasks")
 
             # Phase 5: Executor - Run tasks
@@ -165,16 +173,22 @@ class ModGenerationPipeline:
 
             # Execute task DAG
             exec_result = executor.execute(task_dag, progress_callback=log)
+            self._write_json("phase5_execution_result.json", exec_result)
+            self._write_jsonl("phase5_execution_log.jsonl", self.execution_log)
             log(f"✓ Execution complete: {exec_result['completed_tasks']}/{exec_result['total_tasks']} tasks")
 
             # Phase 6: Validator - Pre-build validation
             log("Phase 6: Validating generated files...")
+            validation_result = None
             try:
                 validation_result = self.validator.validate(ir=mod_ir)
                 log(f"✓ Validation passed ({validation_result['warnings']} warnings)")
+                self._write_json("phase6_validation_report.json", validation_result)
             except Exception as e:
                 log(f"⚠ Validation found issues: {str(e)}")
                 log("⚠ Proceeding to build anyway...")
+                if validation_result:
+                    self._write_json("phase6_validation_report.json", validation_result)
                 # Note: In production, you might want to halt here
                 # For now, we'll attempt the build and let Gradle catch issues
 
@@ -184,6 +198,7 @@ class ModGenerationPipeline:
                 mod_id=mod_ir.mod_id,
                 progress_callback=log
             )
+            self._write_json("phase7_build_result.json", build_result)
 
             if build_result["status"] == "success":
                 jar_path = build_result["jar_path"]
@@ -245,6 +260,26 @@ class ModGenerationPipeline:
     def get_execution_log(self) -> list:
         """Get execution log"""
         return self.execution_log.copy()
+
+    def _write_json(self, filename: str, payload: Dict[str, Any]):
+        """Persist JSON artifacts for each pipeline phase"""
+        try:
+            path = self.artifacts_dir / filename
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(payload, indent=2, default=str))
+        except Exception as e:
+            print(f"[Pipeline {self.job_id}] Warning: failed to write artifact {filename}: {e}")
+
+    def _write_jsonl(self, filename: str, lines: list):
+        """Persist line-delimited logs"""
+        try:
+            path = self.artifacts_dir / filename
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("w", encoding="utf-8") as f:
+                for line in lines:
+                    f.write(json.dumps({"message": line}) + "\n")
+        except Exception as e:
+            print(f"[Pipeline {self.job_id}] Warning: failed to write log {filename}: {e}")
 
 
 # Convenience function for simple usage

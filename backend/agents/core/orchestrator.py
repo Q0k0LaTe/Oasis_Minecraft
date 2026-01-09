@@ -61,6 +61,13 @@ class Orchestrator:
             transport="rest",  # Use REST API instead of gRPC to avoid proxy issues
         )
 
+    @staticmethod
+    def _format_reason(user_prompt: str, max_len: int = 100) -> str:
+        """Format reason string with consistent truncation"""
+        if len(user_prompt) <= max_len:
+            return f"User requested: {user_prompt}"
+        return f"User requested: {user_prompt[:max_len]}..."
+
     def process_prompt(
         self,
         user_prompt: str,
@@ -123,45 +130,65 @@ class Orchestrator:
                 reason="Provided by user"
             ))
 
-        # Add item/block/tool based on what was requested
-        item_type = parsed.get("type", "item")
-
-        if item_type == "item":
-            item_spec = self._create_item_spec(parsed)
-            deltas.append(SpecDelta(
-                operation="add",
-                path="items[0]",
-                value=item_spec.dict(),
-                reason=f"User requested: {user_prompt[:50]}..."
-            ))
-        elif item_type == "block":
-            block_spec = self._create_block_spec(parsed)
-            deltas.append(SpecDelta(
-                operation="add",
-                path="blocks[0]",
-                value=block_spec.dict(),
-                reason=f"User requested: {user_prompt[:50]}..."
-            ))
-        elif item_type == "tool":
-            tool_spec = self._create_tool_spec(parsed)
-            deltas.append(SpecDelta(
-                operation="add",
-                path="tools[0]",
-                value=tool_spec.dict(),
-                reason=f"User requested: {user_prompt[:50]}..."
-            ))
-
-        # Check if clarification needed
+        # Process all items/blocks/tools from parsed result
+        items_list = parsed.get("items", [])
         clarifying_questions = []
-        if parsed.get("ambiguous_rarity"):
-            clarifying_questions.append(
-                f"What rarity should {parsed['name']} be? (COMMON, UNCOMMON, RARE, EPIC)"
-            )
+        created_names = []
+
+        # Counters for array indices
+        item_idx = 0
+        block_idx = 0
+        tool_idx = 0
+
+        for parsed_item in items_list:
+            item_type = parsed_item.get("type", "item")
+            item_name = parsed_item.get("name", "Unknown")
+            created_names.append(item_name)
+
+            if item_type == "item":
+                item_spec = self._create_item_spec(parsed_item)
+                deltas.append(SpecDelta(
+                    operation="add",
+                    path=f"items[{item_idx}]",
+                    value=item_spec.dict(),
+                    reason=self._format_reason(user_prompt)
+                ))
+                item_idx += 1
+            elif item_type == "block":
+                block_spec = self._create_block_spec(parsed_item)
+                deltas.append(SpecDelta(
+                    operation="add",
+                    path=f"blocks[{block_idx}]",
+                    value=block_spec.dict(),
+                    reason=self._format_reason(user_prompt)
+                ))
+                block_idx += 1
+            elif item_type == "tool":
+                tool_spec = self._create_tool_spec(parsed_item)
+                deltas.append(SpecDelta(
+                    operation="add",
+                    path=f"tools[{tool_idx}]",
+                    value=tool_spec.dict(),
+                    reason=self._format_reason(user_prompt)
+                ))
+                tool_idx += 1
+
+            # Check if clarification needed for this item
+            if parsed_item.get("ambiguous_rarity"):
+                clarifying_questions.append(
+                    f"What rarity should {item_name} be? (COMMON, UNCOMMON, RARE, EPIC)"
+                )
+
+        # Generate reasoning summary
+        if len(created_names) == 1:
+            reasoning = f"Created initial spec with: {created_names[0]}"
+        else:
+            reasoning = f"Created initial spec with {len(created_names)} items: {', '.join(created_names)}"
 
         return OrchestratorResponse(
             deltas=deltas,
             clarifying_questions=clarifying_questions,
-            reasoning=f"Created initial spec for {item_type}: {parsed['name']}",
+            reasoning=reasoning,
             requires_user_input=len(clarifying_questions) > 0
         )
 
@@ -194,7 +221,7 @@ class Orchestrator:
                 operation="update",
                 path=path,
                 value=value,
-                reason=f"User requested: {user_prompt}"
+                reason=self._format_reason(user_prompt)
             ))
         elif operation == "add_item":
             new_item = self._create_item_spec(intent)
@@ -202,7 +229,7 @@ class Orchestrator:
                 operation="add",
                 path=f"items[{len(current_spec.items)}]",
                 value=new_item.dict(),
-                reason=f"User requested additional item: {user_prompt}"
+                reason=self._format_reason(user_prompt)
             ))
 
         return OrchestratorResponse(
@@ -222,46 +249,132 @@ class Orchestrator:
 
         prompt_template = ChatPromptTemplate.from_messages([
             ("system", """You are a Minecraft mod design assistant. Parse the user's request and extract:
-- What type of thing they want (item, block, tool)
-- The name/description
+- What type of things they want (item, block, tool) - can be MULTIPLE items
+- The name/description for each item
 - Any properties mentioned (rarity, abilities, etc.)
-- Inferred creative tab
-- Suggested mod name if not a specific item
+- Inferred creative tab for each
+- Suggested mod name
 
-Be generous in interpretation. If unclear, make reasonable assumptions.
+IMPORTANT: If the user asks for multiple items (e.g., "a sword and shield", "ruby ore and ruby ingot"),
+return ALL of them in the items list. Be generous in interpretation. If unclear, make reasonable assumptions.
 {format_instructions}"""),
             ("user", "{prompt}")
         ])
 
         chain = prompt_template | self.llm | parser
 
-        result = chain.invoke({
-            "prompt": prompt,
-            "format_instructions": parser.get_format_instructions()
-        })
-        return result.dict()
+        try:
+            result = chain.invoke({
+                "prompt": prompt,
+                "format_instructions": parser.get_format_instructions()
+            })
+            return result.dict()
+        except Exception as e:
+            # Fallback to safe defaults if LLM parsing fails
+            print(f"Warning: LLM parsing failed, using fallback. Error: {e}")
+            return {
+                "items": [{
+                    "type": "item",
+                    "name": prompt[:30] if len(prompt) < 30 else prompt[:30] + "...",
+                    "description": prompt,
+                    "rarity": "COMMON",
+                    "creative_tab": "MISC",
+                    "special_ability": None,
+                    "texture_description": None,
+                    "ambiguous_rarity": False,
+                    "tool_type": None
+                }],
+                "inferred_mod_name": "Custom Mod"
+            }
 
     def _parse_modification_intent(self, prompt: str, current_spec: ModSpec) -> Dict[str, Any]:
-        """Parse what modification the user wants"""
-        prompt_lower = prompt.lower()
+        """
+        Parse what modification the user wants using LLM
 
-        # Simple heuristics for now
-        if "rare" in prompt_lower or "epic" in prompt_lower:
-            return {
-                "operation": "modify_property",
-                "target": "items[0]",
-                "path": "items[0].rarity",
-                "value": "EPIC" if "epic" in prompt_lower else "RARE"
-            }
-        elif "glow" in prompt_lower or "light" in prompt_lower:
-            return {
-                "operation": "modify_property",
-                "target": "blocks[0]",
-                "path": "blocks[0].luminance",
-                "value": 15
-            }
+        Args:
+            prompt: User's modification request
+            current_spec: Current mod specification for context
 
-        return {"operation": "unknown"}
+        Returns:
+            Dictionary with operation details
+        """
+        parser = PydanticOutputParser(pydantic_object=ModificationIntentParse)
+
+        # Build context about current spec
+        spec_context = f"""Current mod specification:
+- Mod name: {current_spec.mod_name}
+- Items: {len(current_spec.items)} items ({', '.join([item.item_name for item in current_spec.items[:3]])}{"..." if len(current_spec.items) > 3 else ""})
+- Blocks: {len(current_spec.blocks)} blocks ({', '.join([block.block_name for block in current_spec.blocks[:3]])}{"..." if len(current_spec.blocks) > 3 else ""})
+- Tools: {len(current_spec.tools)} tools ({', '.join([tool.tool_name for tool in current_spec.tools[:3]])}{"..." if len(current_spec.tools) > 3 else ""})"""
+
+        prompt_template = ChatPromptTemplate.from_messages([
+            ("system", """You are a Minecraft mod modification assistant. Parse the user's modification request and determine:
+- What operation they want (modify_property, add_item, add_block, add_tool, remove_item, remove_block, remove_tool)
+- What target they're referring to (by name or index, e.g., "first item", "ruby sword")
+- What property to change (if modifying)
+- What value to set (if modifying)
+- What to add (if adding new item/block/tool)
+
+Examples:
+- "make it rarer" -> modify rarity property of most recent item
+- "change the first item's color to blue" -> modify texture/description
+- "add a pickaxe" -> add new tool
+- "remove the diamond block" -> remove specific block
+- "make the ruby block glow" -> modify luminance property
+
+{format_instructions}"""),
+            ("user", "Context:\n{spec_context}\n\nUser request: {prompt}")
+        ])
+
+        chain = prompt_template | self.llm | parser
+
+        try:
+            result = chain.invoke({
+                "spec_context": spec_context,
+                "prompt": prompt,
+                "format_instructions": parser.get_format_instructions()
+            })
+            parsed = result.dict()
+
+            # Convert parsed result to the format expected by _handle_iterative_prompt
+            intent = {"operation": parsed["operation"]}
+
+            if parsed["operation"] == "modify_property":
+                # Build path from target info
+                target_type = parsed.get("target_type", "items")
+                target_index = parsed.get("target_index", 0)
+                property_name = parsed.get("property_name", "rarity")
+
+                intent["path"] = f"{target_type}[{target_index}].{property_name}"
+                intent["value"] = parsed.get("property_value")
+                intent["target"] = parsed.get("target")
+
+            elif parsed["operation"] in ["add_item", "add_block", "add_tool"]:
+                intent["new_item_data"] = parsed.get("new_item", {})
+
+            return intent
+
+        except Exception as e:
+            # Fallback to simple heuristics
+            print(f"Warning: LLM modification parsing failed, using fallback. Error: {e}")
+            prompt_lower = prompt.lower()
+
+            if "rare" in prompt_lower or "epic" in prompt_lower:
+                return {
+                    "operation": "modify_property",
+                    "target": "items[0]",
+                    "path": "items[0].rarity",
+                    "value": "EPIC" if "epic" in prompt_lower else "RARE"
+                }
+            elif "glow" in prompt_lower or "light" in prompt_lower:
+                return {
+                    "operation": "modify_property",
+                    "target": "blocks[0]",
+                    "path": "blocks[0].luminance",
+                    "value": 15
+                }
+
+            return {"operation": "unknown"}
 
     def _create_item_spec(self, parsed: Dict[str, Any]) -> ItemSpec:
         """Create ItemSpec from parsed intent"""
@@ -295,8 +408,8 @@ Be generous in interpretation. If unclear, make reasonable assumptions.
         )
 
 
-class ItemIntentParse(BaseModel):
-    """Parsed intent from user prompt"""
+class ParsedItem(BaseModel):
+    """A single parsed item/block/tool"""
     type: str = Field(..., description="item, block, or tool")
     name: str = Field(..., description="Display name")
     description: str = Field(..., description="What it is/does")
@@ -304,9 +417,26 @@ class ItemIntentParse(BaseModel):
     creative_tab: str = Field("MISC", description="Creative tab")
     special_ability: Optional[str] = Field(None, description="Special ability if mentioned")
     texture_description: Optional[str] = Field(None, description="How texture should look")
-    inferred_mod_name: str = Field(..., description="Suggested mod name")
     ambiguous_rarity: bool = Field(False, description="True if rarity is unclear")
     tool_type: Optional[str] = Field(None, description="PICKAXE, AXE, SWORD, etc.")
+
+
+class ItemIntentParse(BaseModel):
+    """Parsed intent from user prompt - supports multiple items"""
+    items: List[ParsedItem] = Field(..., description="List of items/blocks/tools to create")
+    inferred_mod_name: str = Field(..., description="Suggested mod name")
+
+
+class ModificationIntentParse(BaseModel):
+    """Parsed modification intent for existing spec"""
+    operation: str = Field(..., description="modify_property, add_item, add_block, add_tool, remove_item, remove_block, remove_tool")
+    target: Optional[str] = Field(None, description="What to modify (e.g., 'first item', 'ruby sword', 'all blocks')")
+    target_index: Optional[int] = Field(None, description="Index of item/block/tool to modify (0-based)")
+    target_type: Optional[str] = Field(None, description="items, blocks, or tools")
+    property_name: Optional[str] = Field(None, description="Property to modify (e.g., 'rarity', 'luminance', 'hardness')")
+    property_value: Optional[Any] = Field(None, description="New value for the property")
+    new_item: Optional[ParsedItem] = Field(None, description="New item/block/tool to add (for add operations)")
+    reasoning: str = Field(..., description="Why this interpretation was chosen")
 
 
 __all__ = ["Orchestrator", "OrchestratorResponse", "ConversationContext"]
