@@ -20,7 +20,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import HOST, PORT, CORS_ORIGINS
-from routers import auth, workspaces, conversations, runs, assets, jobs_v2
+from routers import auth, workspaces, conversations, runs, assets, jobs_v2, subscriptions
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -45,6 +45,7 @@ app.include_router(conversations.router)
 app.include_router(runs.router)
 app.include_router(assets.router)
 app.include_router(jobs_v2.router)  # Legacy V2 API for backward compatibility
+app.include_router(subscriptions.router)  # Email subscriptions
 
 
 @app.get("/")
@@ -59,6 +60,7 @@ async def root():
             "conversations": "/api/conversations/{id}/messages",
             "runs": "/api/runs",
             "assets": "/api/assets",
+            "subscriptions": "/api/subscriptions",
             "legacy_v2": "/api/v2/generate"
         },
         "docs": "/docs"

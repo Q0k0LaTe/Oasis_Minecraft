@@ -13,6 +13,7 @@ from sqlalchemy import func
 from pathlib import Path
 
 from database import get_db, Workspace, Run, RunEvent, Artifact, User, UserSession
+from auth.dependencies import get_current_user
 from schemas.run import (
     RunResponse,
     RunListResponse,
@@ -29,37 +30,8 @@ router = APIRouter(prefix="/api/runs", tags=["runs"])
 # ============================================================================
 # Auth Helpers
 # ============================================================================
-
-async def get_current_user(
-    session_token: str = None,
-    db: Session = Depends(get_db)
-) -> User:
-    """Get current user from session token"""
-    if not session_token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required"
-        )
-    
-    session = db.query(UserSession).filter(
-        UserSession.session_token == session_token,
-        UserSession.is_active == True
-    ).first()
-    
-    if not session:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired session"
-        )
-    
-    user = db.query(User).filter(User.id == session.user_id).first()
-    if not user or not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found or disabled"
-        )
-    
-    return user
+# Using unified authentication dependency from auth.dependencies
+# Supports both query parameter (backward compatible) and Authorization header
 
 
 def get_run_or_404(run_id: UUID, user: User, db: Session) -> Run:
@@ -90,13 +62,12 @@ def get_run_or_404(run_id: UUID, user: User, db: Session) -> Run:
 @router.get("/{run_id}", response_model=RunResponse)
 async def get_run(
     run_id: UUID,
-    session_token: str,
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
     Get a run by ID
     """
-    user = await get_current_user(session_token, db)
     run = get_run_or_404(run_id, user, db)
     
     return RunResponse.model_validate(run)
@@ -105,7 +76,7 @@ async def get_run(
 @router.post("/{run_id}/cancel", response_model=RunResponse)
 async def cancel_run(
     run_id: UUID,
-    session_token: str,
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
@@ -113,7 +84,6 @@ async def cancel_run(
     
     Only works for runs in 'queued' or 'running' status.
     """
-    user = await get_current_user(session_token, db)
     run = get_run_or_404(run_id, user, db)
     
     if run.status not in ("queued", "running"):
@@ -138,7 +108,7 @@ async def cancel_run(
 @router.get("/{run_id}/events")
 async def stream_events(
     run_id: UUID,
-    session_token: str,
+    user: User = Depends(get_current_user),
     since: Optional[UUID] = None,
     db: Session = Depends(get_db)
 ):
@@ -159,7 +129,6 @@ async def stream_events(
     - artifact.created: New artifact available
     - task.started / task.finished: Pipeline task events
     """
-    user = await get_current_user(session_token, db)
     run = get_run_or_404(run_id, user, db)
     
     # If there are missed events (since param), send them first
@@ -181,7 +150,7 @@ async def stream_events(
 @router.get("/{run_id}/events/history")
 async def get_event_history(
     run_id: UUID,
-    session_token: str,
+    user: User = Depends(get_current_user),
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db)
@@ -191,7 +160,6 @@ async def get_event_history(
     
     Useful for loading past events or catching up after reconnection.
     """
-    user = await get_current_user(session_token, db)
     run = get_run_or_404(run_id, user, db)
     
     # Get total count
@@ -219,13 +187,12 @@ async def get_event_history(
 @router.get("/{run_id}/artifacts", response_model=ArtifactListResponse)
 async def list_artifacts(
     run_id: UUID,
-    session_token: str,
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
     List all artifacts produced by a run
     """
-    user = await get_current_user(session_token, db)
     run = get_run_or_404(run_id, user, db)
     
     artifacts = db.query(Artifact).filter(
@@ -251,13 +218,12 @@ async def list_artifacts(
 async def get_artifact(
     run_id: UUID,
     artifact_id: UUID,
-    session_token: str,
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
     Get a single artifact by ID
     """
-    user = await get_current_user(session_token, db)
     run = get_run_or_404(run_id, user, db)
     
     artifact = db.query(Artifact).filter(
@@ -281,13 +247,12 @@ async def get_artifact(
 async def download_artifact(
     run_id: UUID,
     artifact_id: UUID,
-    session_token: str,
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
     Download an artifact file
     """
-    user = await get_current_user(session_token, db)
     run = get_run_or_404(run_id, user, db)
     
     artifact = db.query(Artifact).filter(
@@ -326,7 +291,7 @@ async def download_artifact(
 @router.get("/workspace/{workspace_id}", response_model=RunListResponse)
 async def list_workspace_runs(
     workspace_id: UUID,
-    session_token: str,
+    user: User = Depends(get_current_user),
     skip: int = 0,
     limit: int = 50,
     status_filter: Optional[str] = None,
@@ -337,7 +302,6 @@ async def list_workspace_runs(
     
     Optional status filter: queued, running, succeeded, failed, canceled
     """
-    user = await get_current_user(session_token, db)
     
     # Check workspace access
     workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
@@ -379,8 +343,8 @@ async def list_workspace_runs(
 @router.post("/workspace/{workspace_id}/build", response_model=RunResponse, status_code=status.HTTP_201_CREATED)
 async def trigger_build(
     workspace_id: UUID,
-    session_token: str,
     background_tasks: BackgroundTasks,
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
@@ -388,7 +352,6 @@ async def trigger_build(
     
     This will compile the current spec to a JAR using the V2 pipeline.
     """
-    user = await get_current_user(session_token, db)
     
     # Check workspace access
     workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()

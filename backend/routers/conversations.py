@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from database import get_db, Workspace, Conversation, Message, Run, User, UserSession
+from auth.dependencies import get_current_user
 from schemas.conversation import (
     ConversationCreate,
     ConversationUpdate,
@@ -28,39 +29,10 @@ router = APIRouter(tags=["conversations"])
 
 
 # ============================================================================
-# Auth Helpers (same as workspaces.py - should be refactored to shared module)
+# Auth Helpers
 # ============================================================================
-
-async def get_current_user(
-    session_token: str = None,
-    db: Session = Depends(get_db)
-) -> User:
-    """Get current user from session token"""
-    if not session_token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required"
-        )
-    
-    session = db.query(UserSession).filter(
-        UserSession.session_token == session_token,
-        UserSession.is_active == True
-    ).first()
-    
-    if not session:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired session"
-        )
-    
-    user = db.query(User).filter(User.id == session.user_id).first()
-    if not user or not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found or disabled"
-        )
-    
-    return user
+# Using unified authentication dependency from auth.dependencies
+# Supports both query parameter (backward compatible) and Authorization header
 
 
 def get_workspace_or_404(workspace_id: UUID, user: User, db: Session) -> Workspace:
@@ -111,13 +83,12 @@ def get_conversation_or_404(conversation_id: UUID, user: User, db: Session) -> C
 async def create_conversation(
     workspace_id: UUID,
     request: ConversationCreate,
-    session_token: str,
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
     Create a new conversation in a workspace
     """
-    user = await get_current_user(session_token, db)
     workspace = get_workspace_or_404(workspace_id, user, db)
     
     conversation = Conversation(
@@ -147,7 +118,7 @@ async def create_conversation(
 @router.get("/api/workspaces/{workspace_id}/conversations", response_model=ConversationListResponse)
 async def list_conversations(
     workspace_id: UUID,
-    session_token: str,
+    user: User = Depends(get_current_user),
     skip: int = 0,
     limit: int = 50,
     db: Session = Depends(get_db)
@@ -155,7 +126,6 @@ async def list_conversations(
     """
     List all conversations in a workspace
     """
-    user = await get_current_user(session_token, db)
     workspace = get_workspace_or_404(workspace_id, user, db)
     
     # Get total count
@@ -190,13 +160,12 @@ async def list_conversations(
 @router.get("/api/conversations/{conversation_id}", response_model=ConversationResponse)
 async def get_conversation(
     conversation_id: UUID,
-    session_token: str,
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
     Get a single conversation by ID
     """
-    user = await get_current_user(session_token, db)
     conversation = get_conversation_or_404(conversation_id, user, db)
     
     message_count = db.query(func.count(Message.id)).filter(
@@ -213,13 +182,12 @@ async def get_conversation(
 async def update_conversation(
     conversation_id: UUID,
     request: ConversationUpdate,
-    session_token: str,
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
     Update conversation metadata (title)
     """
-    user = await get_current_user(session_token, db)
     conversation = get_conversation_or_404(conversation_id, user, db)
     
     if request.title is not None:
@@ -235,13 +203,12 @@ async def update_conversation(
 @router.delete("/api/conversations/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_conversation(
     conversation_id: UUID,
-    session_token: str,
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
     Delete a conversation and all its messages
     """
-    user = await get_current_user(session_token, db)
     conversation = get_conversation_or_404(conversation_id, user, db)
     
     db.delete(conversation)
@@ -257,7 +224,7 @@ async def delete_conversation(
 @router.get("/api/conversations/{conversation_id}/messages", response_model=MessageListResponse)
 async def list_messages(
     conversation_id: UUID,
-    session_token: str,
+    user: User = Depends(get_current_user),
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db)
@@ -267,7 +234,6 @@ async def list_messages(
     
     Messages are returned in chronological order (oldest first).
     """
-    user = await get_current_user(session_token, db)
     conversation = get_conversation_or_404(conversation_id, user, db)
     
     # Get total count
@@ -293,8 +259,8 @@ async def list_messages(
 async def send_message(
     conversation_id: UUID,
     request: MessageCreate,
-    session_token: str,
     background_tasks: BackgroundTasks,
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
@@ -310,7 +276,6 @@ async def send_message(
     - Emit events as it progresses
     - Eventually create an assistant message with results
     """
-    user = await get_current_user(session_token, db)
     conversation = get_conversation_or_404(conversation_id, user, db)
     
     # Get workspace
@@ -368,13 +333,12 @@ async def send_message(
 @router.get("/api/messages/{message_id}", response_model=MessageResponse)
 async def get_message(
     message_id: UUID,
-    session_token: str,
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
     Get a single message by ID
     """
-    user = await get_current_user(session_token, db)
     
     message = db.query(Message).filter(Message.id == message_id).first()
     if not message:

@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from database import get_db, Workspace, Asset, User, UserSession
+from auth.dependencies import get_current_user
 from schemas.asset import (
     AssetResponse,
     AssetListResponse,
@@ -34,37 +35,8 @@ ASSETS_DIR.mkdir(exist_ok=True)
 # ============================================================================
 # Auth Helpers
 # ============================================================================
-
-async def get_current_user(
-    session_token: str = None,
-    db: Session = Depends(get_db)
-) -> User:
-    """Get current user from session token"""
-    if not session_token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required"
-        )
-    
-    session = db.query(UserSession).filter(
-        UserSession.session_token == session_token,
-        UserSession.is_active == True
-    ).first()
-    
-    if not session:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired session"
-        )
-    
-    user = db.query(User).filter(User.id == session.user_id).first()
-    if not user or not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found or disabled"
-        )
-    
-    return user
+# Using unified authentication dependency from auth.dependencies
+# Supports both query parameter (backward compatible) and Authorization header
 
 
 def get_workspace_or_404(workspace_id: UUID, user: User, db: Session) -> Workspace:
@@ -93,7 +65,7 @@ def get_workspace_or_404(workspace_id: UUID, user: User, db: Session) -> Workspa
 @router.post("/workspaces/{workspace_id}/assets", response_model=AssetResponse, status_code=status.HTTP_201_CREATED)
 async def upload_asset(
     workspace_id: UUID,
-    session_token: str,
+    user: User = Depends(get_current_user),
     file: UploadFile = File(...),
     asset_type: str = Form(...),  # cover, texture, reference
     target_type: Optional[str] = Form(None),  # block, item, tool
@@ -111,7 +83,6 @@ async def upload_asset(
     For textures, optionally specify target_type and target_id to bind
     the asset to a specific block/item/tool in the spec.
     """
-    user = await get_current_user(session_token, db)
     workspace = get_workspace_or_404(workspace_id, user, db)
     
     # Validate asset type
@@ -184,7 +155,7 @@ async def upload_asset(
 @router.get("/workspaces/{workspace_id}/assets", response_model=AssetListResponse)
 async def list_assets(
     workspace_id: UUID,
-    session_token: str,
+    user: User = Depends(get_current_user),
     asset_type: Optional[str] = None,
     target_type: Optional[str] = None,
     target_id: Optional[str] = None,
@@ -200,7 +171,6 @@ async def list_assets(
     - target_type: Filter by target type (block, item, tool)
     - target_id: Filter by target element ID
     """
-    user = await get_current_user(session_token, db)
     workspace = get_workspace_or_404(workspace_id, user, db)
     
     # Build query
@@ -236,7 +206,7 @@ async def list_assets(
 async def select_asset(
     workspace_id: UUID,
     request: AssetSelectRequest,
-    session_token: str,
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
@@ -245,7 +215,6 @@ async def select_asset(
     This updates the asset's target_type and target_id to associate it
     with a specific element in the workspace spec.
     """
-    user = await get_current_user(session_token, db)
     workspace = get_workspace_or_404(workspace_id, user, db)
     
     # Find the asset
@@ -296,7 +265,7 @@ async def select_asset(
 @router.get("/assets/{asset_id}")
 async def get_asset_file(
     asset_id: UUID,
-    session_token: str,
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
@@ -304,7 +273,6 @@ async def get_asset_file(
     
     Returns the actual file for display/download.
     """
-    user = await get_current_user(session_token, db)
     
     asset = db.query(Asset).filter(Asset.id == asset_id).first()
     if not asset:
@@ -339,13 +307,12 @@ async def get_asset_file(
 @router.get("/assets/{asset_id}/info", response_model=AssetResponse)
 async def get_asset_info(
     asset_id: UUID,
-    session_token: str,
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
     Get asset metadata (without file content)
     """
-    user = await get_current_user(session_token, db)
     
     asset = db.query(Asset).filter(Asset.id == asset_id).first()
     if not asset:
@@ -371,7 +338,7 @@ async def get_asset_info(
 @router.delete("/assets/{asset_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_asset(
     asset_id: UUID,
-    session_token: str,
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
@@ -379,7 +346,6 @@ async def delete_asset(
     
     Removes both the database record and the file.
     """
-    user = await get_current_user(session_token, db)
     
     asset = db.query(Asset).filter(Asset.id == asset_id).first()
     if not asset:
