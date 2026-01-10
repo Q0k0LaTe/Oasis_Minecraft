@@ -3,7 +3,10 @@ Authentication router
 FastAPI routes for user registration and login
 """
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Header, Query
+from typing import Optional
+
+from auth.dependencies import get_session_token_from_query_or_header
 from sqlalchemy.orm import Session
 
 from database import get_db, User, UserSession
@@ -15,6 +18,9 @@ from auth.schemas import (
     VerifyCodeRequest, VerifyCodeResponse,
     GoogleLoginRequest, GoogleLoginResponse,
     SetUsernameRequest, SetUsernameResponse,
+    LogoutRequest, LogoutResponse,
+    LogoutAllResponse,
+    DeactivateRequest, DeactivateResponse,
 )
 from utils.password import hash_password, verify_password
 from auth.verification import generate_verification_code, store_verification_code, check_code, verify_code, normalize_email
@@ -441,5 +447,225 @@ async def set_username(
             email=new_user.email,
             created_at=new_user.created_at
         )
+    )
+
+
+
+
+@router.post("/logout", response_model=LogoutResponse)
+async def logout(
+    request: Optional[LogoutRequest] = None,
+    session_token: Optional[str] = Query(None),
+    authorization: Optional[str] = Header(None),
+    db: Session = Depends(get_db)
+):
+    """
+    Logout from current session
+    
+    Invalidates the current session token by setting is_active=False.
+    Supports token via query parameter (backward compatible) or Authorization header.
+    
+    Idempotent: returns success even if token is already invalid or doesn't exist
+    (to prevent information leakage about token existence).
+    """
+    # Get token from query, header, or request body
+    token = get_session_token_from_query_or_header(session_token, authorization)
+    if not token and request and request.session_token:
+        token = request.session_token
+    
+    if not token:
+        # No token provided - return success (idempotent)
+        return LogoutResponse(
+            success=True,
+            message="Logout successful",
+            revoked=False
+        )
+    
+    # Try to find and revoke the session
+    session = db.query(UserSession).filter(
+        UserSession.session_token == token
+    ).first()
+    
+    revoked = False
+    if session and session.is_active:
+        session.is_active = False
+        db.commit()
+        revoked = True
+    
+    # Always return success (idempotent - don't leak token existence)
+    return LogoutResponse(
+        success=True,
+        message="Logout successful",
+        revoked=revoked
+    )
+
+
+@router.post("/logout-all", response_model=LogoutAllResponse)
+async def logout_all(
+    session_token: Optional[str] = Query(None),
+    authorization: Optional[str] = Header(None),
+    db: Session = Depends(get_db)
+):
+    """
+    Logout from all sessions
+    
+    Invalidates all active sessions for the current user.
+    Requires a valid session token to identify the user.
+    """
+    # Get token from query or header
+    token = get_session_token_from_query_or_header(session_token, authorization)
+    
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required"
+        )
+    
+    # Find the current session to get user_id
+    session = db.query(UserSession).filter(
+        UserSession.session_token == token,
+        UserSession.is_active == True
+    ).first()
+    
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired session"
+        )
+    
+    user_id = session.user_id
+    
+    # Revoke all active sessions for this user
+    revoked_count = db.query(UserSession).filter(
+        UserSession.user_id == user_id,
+        UserSession.is_active == True
+    ).update({"is_active": False})
+    
+    db.commit()
+    
+    return LogoutAllResponse(
+        success=True,
+        message=f"Logged out from {revoked_count} session(s)",
+        revoked_count=revoked_count
+    )
+
+
+@router.post("/deactivate", response_model=DeactivateResponse)
+async def deactivate(
+    request: DeactivateRequest,
+    session_token: Optional[str] = Query(None),
+    authorization: Optional[str] = Header(None),
+    db: Session = Depends(get_db)
+):
+    """
+    Deactivate user account (soft delete)
+    
+    Sets User.is_active=False and invalidates all sessions for the user.
+    
+    Requires additional verification:
+    - For email/password users: must provide password
+    - For Google OAuth users: must provide valid id_token
+    
+    Idempotent: can be called multiple times without error.
+    """
+    # Get token from query or header
+    token = get_session_token_from_query_or_header(session_token, authorization)
+    
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required"
+        )
+    
+    # Find the current session to get user
+    session = db.query(UserSession).filter(
+        UserSession.session_token == token,
+        UserSession.is_active == True
+    ).first()
+    
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired session"
+        )
+    
+    user = db.query(User).filter(User.id == session.user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    # Check if already deactivated (idempotent)
+    if not user.is_active:
+        return DeactivateResponse(
+            success=True,
+            message="Account is already deactivated"
+        )
+    
+    # Verify based on auth_provider
+    if user.auth_provider == 'email':
+        # Email/password users must provide password
+        if not request.password:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Password required for email/password accounts"
+            )
+        
+        if not user.password_hash:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Password not set for this account"
+            )
+        
+        if not verify_password(request.password, user.password_hash):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid password"
+            )
+    
+    elif user.auth_provider == 'google':
+        # Google OAuth users must provide valid id_token
+        if not request.id_token:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Google ID token required for Google OAuth accounts"
+            )
+        
+        # Verify the token and ensure it matches the user
+        user_info = verify_google_token(request.id_token)
+        if not user_info:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid Google token"
+            )
+        
+        # Verify the token belongs to this user
+        if user_info['sub'] != user.google_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Token does not match this account"
+            )
+    
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unknown auth provider: {user.auth_provider}"
+        )
+    
+    # Deactivate user and all sessions
+    user.is_active = False
+    
+    # Revoke all active sessions for this user
+    db.query(UserSession).filter(
+        UserSession.user_id == user.id,
+        UserSession.is_active == True
+    ).update({"is_active": False})
+    
+    db.commit()
+    
+    return DeactivateResponse(
+        success=True,
+        message="Account deactivated successfully"
     )
 
