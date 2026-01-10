@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from database import get_db, Workspace, SpecHistory, User, UserSession
+from auth.dependencies import get_current_user
 from schemas.workspace import (
     WorkspaceCreate,
     WorkspaceUpdate,
@@ -28,42 +29,8 @@ router = APIRouter(prefix="/api/workspaces", tags=["workspaces"])
 # ============================================================================
 # Auth Helpers
 # ============================================================================
-
-async def get_current_user(
-    session_token: str = None,
-    db: Session = Depends(get_db)
-) -> User:
-    """
-    Get current user from session token
-    
-    TODO: Implement proper auth middleware with header/cookie token extraction
-    For now, accepts session_token as query param for testing
-    """
-    if not session_token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required"
-        )
-    
-    session = db.query(UserSession).filter(
-        UserSession.session_token == session_token,
-        UserSession.is_active == True
-    ).first()
-    
-    if not session:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired session"
-        )
-    
-    user = db.query(User).filter(User.id == session.user_id).first()
-    if not user or not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found or disabled"
-        )
-    
-    return user
+# Using unified authentication dependency from auth.dependencies
+# Supports both query parameter (backward compatible) and Authorization header
 
 
 def get_workspace_or_404(
@@ -97,7 +64,7 @@ def get_workspace_or_404(
 @router.post("", response_model=WorkspaceResponse, status_code=status.HTTP_201_CREATED)
 async def create_workspace(
     request: WorkspaceCreate,
-    session_token: str,
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
@@ -106,7 +73,6 @@ async def create_workspace(
     Creates a new Minecraft Mod project workspace for the current user.
     Optionally initialize with a spec.
     """
-    user = await get_current_user(session_token, db)
     
     now = datetime.utcnow()
     workspace = Workspace(
@@ -140,7 +106,7 @@ async def create_workspace(
 
 @router.get("", response_model=WorkspaceListResponse)
 async def list_workspaces(
-    session_token: str,
+    user: User = Depends(get_current_user),
     skip: int = 0,
     limit: int = 50,
     db: Session = Depends(get_db)
@@ -150,7 +116,6 @@ async def list_workspaces(
     
     Returns workspaces sorted by last_modified_at (most recent first).
     """
-    user = await get_current_user(session_token, db)
     
     # Get total count
     total = db.query(func.count(Workspace.id)).filter(
@@ -173,7 +138,7 @@ async def list_workspaces(
 @router.get("/{workspace_id}", response_model=WorkspaceResponse)
 async def get_workspace(
     workspace_id: UUID,
-    session_token: str,
+    user: User = Depends(get_current_user),
     include_spec: bool = True,
     db: Session = Depends(get_db)
 ):
@@ -182,7 +147,6 @@ async def get_workspace(
     
     Set include_spec=false to exclude the spec from the response.
     """
-    user = await get_current_user(session_token, db)
     workspace = get_workspace_or_404(workspace_id, user, db)
     
     response = WorkspaceResponse.model_validate(workspace)
@@ -196,7 +160,7 @@ async def get_workspace(
 async def update_workspace(
     workspace_id: UUID,
     request: WorkspaceUpdate,
-    session_token: str,
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
@@ -204,7 +168,6 @@ async def update_workspace(
     
     Does not update spec - use the spec endpoints for that.
     """
-    user = await get_current_user(session_token, db)
     workspace = get_workspace_or_404(workspace_id, user, db)
     
     # Update fields
@@ -226,7 +189,7 @@ async def update_workspace(
 @router.delete("/{workspace_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_workspace(
     workspace_id: UUID,
-    session_token: str,
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
@@ -234,7 +197,6 @@ async def delete_workspace(
     
     This will cascade delete all conversations, messages, runs, and assets.
     """
-    user = await get_current_user(session_token, db)
     workspace = get_workspace_or_404(workspace_id, user, db)
     
     db.delete(workspace)
@@ -250,13 +212,12 @@ async def delete_workspace(
 @router.get("/{workspace_id}/spec", response_model=SpecResponse)
 async def get_spec(
     workspace_id: UUID,
-    session_token: str,
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
     Get the current spec for a workspace
     """
-    user = await get_current_user(session_token, db)
     workspace = get_workspace_or_404(workspace_id, user, db)
     
     return SpecResponse(
@@ -271,7 +232,7 @@ async def get_spec(
 async def update_spec(
     workspace_id: UUID,
     request: SpecUpdate,
-    session_token: str,
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
@@ -279,7 +240,6 @@ async def update_spec(
     
     This creates a new version in spec_history.
     """
-    user = await get_current_user(session_token, db)
     workspace = get_workspace_or_404(workspace_id, user, db)
     
     # Update spec
@@ -312,7 +272,7 @@ async def update_spec(
 async def patch_spec(
     workspace_id: UUID,
     request: SpecPatch,
-    session_token: str,
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
@@ -323,7 +283,6 @@ async def patch_spec(
     
     This creates a new version in spec_history.
     """
-    user = await get_current_user(session_token, db)
     workspace = get_workspace_or_404(workspace_id, user, db)
     
     # Get current spec
@@ -368,7 +327,7 @@ async def patch_spec(
 @router.get("/{workspace_id}/spec/history")
 async def get_spec_history(
     workspace_id: UUID,
-    session_token: str,
+    user: User = Depends(get_current_user),
     skip: int = 0,
     limit: int = 20,
     db: Session = Depends(get_db)
@@ -376,7 +335,6 @@ async def get_spec_history(
     """
     Get spec version history for a workspace
     """
-    user = await get_current_user(session_token, db)
     workspace = get_workspace_or_404(workspace_id, user, db)
     
     # Get total count
@@ -401,7 +359,7 @@ async def get_spec_history(
 async def rollback_spec(
     workspace_id: UUID,
     version: int,
-    session_token: str,
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
@@ -409,7 +367,6 @@ async def rollback_spec(
     
     Creates a new version with the old spec content.
     """
-    user = await get_current_user(session_token, db)
     workspace = get_workspace_or_404(workspace_id, user, db)
     
     # Find the target version
