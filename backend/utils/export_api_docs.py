@@ -37,13 +37,19 @@ class APIDocExporter:
             sys.exit(1)
     
     def export_json(self, output_path: str, spec: Dict[str, Any]):
-        """导出为 JSON 格式"""
-        with open(output_path, 'w', encoding='utf-8') as f:
+        """导出为 JSON 格式（如已存在将自动覆盖）"""
+        output_file = Path(output_path)
+        if output_file.exists():
+            print(f"⚠️ 目标文件已存在，将自动覆盖: {output_path}")
+        with open(output_file, 'w', encoding='utf-8') as f:
             json.dump(spec, f, indent=2, ensure_ascii=False)
         print(f"✅ JSON 文档已导出: {output_path}")
     
     def export_markdown(self, output_path: str, spec: Dict[str, Any]):
-        """导出为 Markdown 格式"""
+        """导出为 Markdown 格式（如已存在将自动覆盖）"""
+        output_file = Path(output_path)
+        if output_file.exists():
+            print(f"⚠️ 目标文件已存在，将自动覆盖: {output_path}")
         md_lines = []
         
         # 标题和元信息
@@ -188,7 +194,7 @@ class APIDocExporter:
                 md_lines.append("")
         
         # 写入文件
-        with open(output_path, 'w', encoding='utf-8') as f:
+        with open(output_file, 'w', encoding='utf-8') as f:
             f.write('\n'.join(md_lines))
         print(f"✅ Markdown 文档已导出: {output_path}")
     
