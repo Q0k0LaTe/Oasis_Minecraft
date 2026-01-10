@@ -14,6 +14,7 @@ from .models import (
     Artifact,
     Asset,
     SpecHistory,
+    EmailSubscription,
 )
 
 __all__ = [
@@ -33,4 +34,5 @@ __all__ = [
     "Artifact",
     "Asset",
     "SpecHistory",
+    "EmailSubscription",
 ]

@@ -372,3 +372,38 @@ class SpecHistory(Base):
 
     def __repr__(self):
         return f"<SpecHistory(workspace_id={self.workspace_id}, version={self.version})>"
+
+
+class EmailSubscription(Base):
+    """
+    EmailSubscription model - email subscriptions for product updates
+    
+    Allows users to subscribe to product updates without requiring registration.
+    Supports unsubscribe functionality via token.
+    """
+    __tablename__ = "email_subscriptions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String(255), unique=True, nullable=False, index=True)  # Normalized to lowercase
+    status = Column(String(20), nullable=False, default="subscribed")  # subscribed, unsubscribed, bounced
+    unsubscribe_token = Column(String(255), unique=True, nullable=False, index=True)  # UUID for unsubscribe
+    
+    # Source tracking
+    source = Column(String(50), nullable=True)  # landing, cli, unknown, etc.
+    utm_source = Column(String(255), nullable=True)
+    utm_medium = Column(String(255), nullable=True)
+    utm_campaign = Column(String(255), nullable=True)
+    utm_term = Column(String(255), nullable=True)
+    utm_content = Column(String(255), nullable=True)
+    
+    # Request metadata
+    ip_address = Column(String(45), nullable=True)  # IPv4 or IPv6
+    user_agent = Column(Text, nullable=True)
+    
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    unsubscribed_at = Column(DateTime(timezone=True), nullable=True)
+
+    def __repr__(self):
+        return f"<EmailSubscription(id={self.id}, email='{self.email}', status='{self.status}')>"
