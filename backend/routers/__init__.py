@@ -8,8 +8,6 @@ from . import conversations
 from . import runs
 from . import assets
 from . import subscriptions
-# Legacy V2 API (kept for backward compatibility)
-from . import jobs_v2
 
 __all__ = [
     "auth",
@@ -18,5 +16,4 @@ __all__ = [
     "runs",
     "assets",
     "subscriptions",
-    "jobs_v2",
 ]
