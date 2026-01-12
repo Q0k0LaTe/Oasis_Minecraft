@@ -66,7 +66,7 @@ class Executor:
 
         log(f"Starting execution of {dag.total_tasks} tasks")
 
-        # Execute tasks in order
+        # Execute tasks in order by topological sort
         while len(dag.completed_task_ids) < dag.total_tasks:
             # Get tasks ready to run
             ready_tasks = dag.get_ready_tasks()
