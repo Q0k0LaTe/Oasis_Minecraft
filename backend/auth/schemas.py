@@ -120,11 +120,6 @@ class SetUsernameResponse(BaseModel):
     user: Optional['UserInfo'] = None
 
 
-class LogoutRequest(BaseModel):
-    """Logout request - session_token can be passed via query param or body"""
-    session_token: Optional[str] = Field(None, description="Session token (optional if passed via query param)")
-
-
 class LogoutResponse(BaseModel):
     """Logout response"""
     success: bool

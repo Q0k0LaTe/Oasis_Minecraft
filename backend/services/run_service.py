@@ -2,38 +2,55 @@
 Run Service - Background task execution for runs
 
 Handles:
-- Generation runs (user message → AI generates spec delta → build)
+- Generation runs (user message → Orchestrator → SpecManager → DB)
 - Build runs (compile current spec to JAR)
 - Event emission during execution
+
+Architecture:
+- Phase 1-2 are INTERACTIVE: Orchestrator generates deltas, SpecManager applies them
+- Phase 1-2 can loop (human-in-the-loop) until user triggers Build
+- Phase 3+ (Build) runs the full pipeline: Compiler → Planner → Executor → Validator → Builder
 """
 import traceback
 from datetime import datetime
 from pathlib import Path
 from uuid import UUID
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
-from database import SessionLocal, Run, Workspace, Message, Artifact, SpecHistory
+from sqlalchemy.orm import Session as DBSession
+
+from database import SessionLocal, Run, Workspace, Message, Artifact, SpecHistory, Conversation
 from services.event_service import (
     emit_event_sync,
     EventType,
 )
 from config import GENERATED_DIR, DOWNLOADS_DIR
 
+# Import agents
+from agents.core.orchestrator import Orchestrator, OrchestratorResponse, ConversationContext
+from agents.core.spec_manager import SpecManager
+from agents.schemas import ModSpec, SpecDelta
+
+
+# ============================================================================
+# Run Execution Entry Points
+# ============================================================================
 
 def execute_run(run_id: str):
     """
-    Execute a generation run in background
+    Execute a generation run in background (Phase 1-2 only)
     
     This is called from the conversations router when a user sends a message
     with trigger_run=True.
     
-    Flow:
-    1. Load run and workspace
-    2. Get user message content
-    3. Call AI to generate spec delta (placeholder for now)
-    4. Apply delta to spec
-    5. Optionally trigger build
-    6. Create assistant message with result
+    Flow (Phase 1-2 - Interactive Spec Generation):
+    1. Load run, workspace, and conversation context
+    2. Phase 1: Call Orchestrator to generate SpecDeltas
+    3. Phase 2: Apply deltas via SpecManager and persist to DB
+    4. If requires_user_input: pause and wait for user response
+    5. Create assistant message with results
+    
+    Note: This does NOT run the full pipeline (build). User triggers build separately.
     """
     db = SessionLocal()
     
@@ -55,8 +72,15 @@ def execute_run(run_id: str):
         run.started_at = datetime.utcnow()
         db.commit()
         
-        emit_event_sync(db, run.id, EventType.RUN_STATUS, {"status": "running"})
-        emit_event_sync(db, run.id, EventType.LOG_APPEND, {"message": "Starting generation run...", "level": "info"})
+        emit_event_sync(db, run.id, EventType.RUN_STATUS, {
+            "status": "running",
+            "workspace_id": str(workspace.id),
+            "run_id": str(run.id)
+        })
+        emit_event_sync(db, run.id, EventType.LOG_APPEND, {
+            "message": "Starting generation run...",
+            "level": "info"
+        })
         
         # Get trigger message
         trigger_message = None
@@ -65,64 +89,171 @@ def execute_run(run_id: str):
         
         user_prompt = trigger_message.content if trigger_message else "Generate a mod"
         
-        emit_event_sync(db, run.id, EventType.LOG_APPEND, {"message": f"Processing: {user_prompt[:100]}...", "level": "info"})
+        emit_event_sync(db, run.id, EventType.LOG_APPEND, {
+            "message": f"Processing: {user_prompt[:100]}{'...' if len(user_prompt) > 100 else ''}",
+            "level": "info"
+        })
+        
+        # Build conversation context from previous messages
+        conversation_context = _build_conversation_context(db, run.conversation_id)
         
         # ====================================================================
-        # AI Generation (Placeholder - Agent team will implement)
+        # Phase 1: Orchestrator - Convert prompt to SpecDeltas
         # ====================================================================
         
-        emit_event_sync(db, run.id, EventType.LOG_APPEND, {"message": "Phase 1: Analyzing prompt...", "level": "info"})
+        emit_event_sync(db, run.id, EventType.LOG_APPEND, {
+            "message": "Phase 1: Analyzing prompt with AI...",
+            "level": "info"
+        })
         emit_event_sync(db, run.id, EventType.RUN_PROGRESS, {"progress": 10})
+        emit_event_sync(db, run.id, EventType.TASK_STARTED, {"task": "orchestrator"})
         
-        # Placeholder: Generate a simple spec delta
-        # In the real implementation, this will call the Orchestrator
-        spec_delta = _generate_spec_delta_placeholder(user_prompt)
+        # Load current spec from workspace (may be None for new workspace)
+        current_spec = _load_spec_from_workspace(workspace)
         
-        emit_event_sync(db, run.id, EventType.SPEC_PREVIEW, {"delta": spec_delta})
-        emit_event_sync(db, run.id, EventType.LOG_APPEND, {"message": "Phase 2: Applying spec changes...", "level": "info"})
+        # Call Orchestrator
+        orchestrator = Orchestrator()
+        orchestrator_response = orchestrator.process_prompt(
+            user_prompt=user_prompt,
+            current_spec=current_spec,
+            context=conversation_context
+        )
+        
+        emit_event_sync(db, run.id, EventType.TASK_FINISHED, {
+            "task": "orchestrator",
+            "deltas_count": len(orchestrator_response.deltas),
+            "requires_user_input": orchestrator_response.requires_user_input
+        })
+        
+        emit_event_sync(db, run.id, EventType.LOG_APPEND, {
+            "message": f"✓ Generated {len(orchestrator_response.deltas)} spec changes",
+            "level": "info"
+        })
+        
+        if orchestrator_response.clarifying_questions:
+            emit_event_sync(db, run.id, EventType.LOG_APPEND, {
+                "message": f"Questions: {', '.join(orchestrator_response.clarifying_questions)}",
+                "level": "warning"
+            })
+        
         emit_event_sync(db, run.id, EventType.RUN_PROGRESS, {"progress": 30})
         
-        # Apply delta to workspace spec
-        current_spec = workspace.spec or {}
-        new_spec = _apply_spec_delta_placeholder(current_spec, spec_delta)
+        # Preview the deltas (before applying)
+        for i, delta in enumerate(orchestrator_response.deltas):
+            emit_event_sync(db, run.id, EventType.SPEC_PREVIEW, {
+                "workspace_id": str(workspace.id),
+                "run_id": str(run.id),
+                "delta_index": i,
+                "delta": delta.model_dump(exclude_none=True)
+            })
         
-        # Save spec
-        workspace.spec = new_spec
-        workspace.spec_version += 1
-        workspace.last_modified_at = datetime.utcnow()
+        # ====================================================================
+        # Phase 2: SpecManager - Apply deltas and persist to DB
+        # ====================================================================
         
-        # Save to history
-        history = SpecHistory(
-            workspace_id=workspace.id,
-            version=workspace.spec_version,
-            spec=new_spec,
-            delta=spec_delta,
+        emit_event_sync(db, run.id, EventType.LOG_APPEND, {
+            "message": "Phase 2: Applying spec changes...",
+            "level": "info"
+        })
+        emit_event_sync(db, run.id, EventType.RUN_PROGRESS, {"progress": 40})
+        emit_event_sync(db, run.id, EventType.TASK_STARTED, {"task": "spec_manager"})
+        
+        # Apply deltas and get new spec
+        new_spec, applied_deltas = _apply_deltas_to_workspace(
+            db=db,
+            workspace=workspace,
+            deltas=orchestrator_response.deltas,
+            run=run,
             change_source="ai",
             change_notes=f"Generated from: {user_prompt[:50]}..."
         )
-        db.add(history)
-        db.commit()
         
-        emit_event_sync(db, run.id, EventType.SPEC_SAVED, {"version": workspace.spec_version})
-        emit_event_sync(db, run.id, EventType.LOG_APPEND, {"message": f"Spec saved (v{workspace.spec_version})", "level": "info"})
-        emit_event_sync(db, run.id, EventType.RUN_PROGRESS, {"progress": 50})
+        emit_event_sync(db, run.id, EventType.TASK_FINISHED, {"task": "spec_manager"})
+        
+        # Emit spec.saved event with full details
+        emit_event_sync(db, run.id, EventType.SPEC_SAVED, {
+            "workspace_id": str(workspace.id),
+            "run_id": str(run.id),
+            "spec_version": workspace.spec_version,
+            "spec": new_spec.model_dump() if new_spec else None,
+            "items_count": len(new_spec.items) if new_spec else 0,
+            "blocks_count": len(new_spec.blocks) if new_spec else 0,
+            "tools_count": len(new_spec.tools) if new_spec else 0
+        })
+        
+        emit_event_sync(db, run.id, EventType.LOG_APPEND, {
+            "message": f"✓ Spec saved (v{workspace.spec_version})",
+            "level": "info"
+        })
+        
+        if new_spec:
+            emit_event_sync(db, run.id, EventType.LOG_APPEND, {
+                "message": f"  - Mod: {new_spec.mod_name} | Items: {len(new_spec.items)}, Blocks: {len(new_spec.blocks)}, Tools: {len(new_spec.tools)}",
+                "level": "info"
+            })
+        
+        emit_event_sync(db, run.id, EventType.RUN_PROGRESS, {"progress": 70})
         
         # ====================================================================
-        # Build Phase (Optional - can be triggered separately)
+        # Check if user input is required (Phase 1-2 Loop)
         # ====================================================================
         
-        # For now, we'll just mark as succeeded without building
-        # The user can trigger a build separately via POST /api/runs/workspace/{id}/build
+        if orchestrator_response.requires_user_input:
+            # Pause the run - wait for user to respond to clarifying questions
+            run.status = "awaiting_input"
+            run.result = {
+                "phase": "1-2",
+                "spec_version": workspace.spec_version,
+                "requires_user_input": True,
+                "clarifying_questions": orchestrator_response.clarifying_questions,
+                "reasoning": orchestrator_response.reasoning
+            }
+            db.commit()
+            
+            emit_event_sync(db, run.id, EventType.RUN_STATUS, {
+                "status": "awaiting_input",
+                "workspace_id": str(workspace.id),
+                "run_id": str(run.id),
+                "clarifying_questions": orchestrator_response.clarifying_questions
+            })
+            
+            emit_event_sync(db, run.id, EventType.LOG_APPEND, {
+                "message": "⏸ Waiting for user input...",
+                "level": "warning"
+            })
+            
+            # Create assistant message asking for clarification
+            if run.conversation_id:
+                questions_text = "\n".join([f"• {q}" for q in orchestrator_response.clarifying_questions])
+                assistant_message = Message(
+                    conversation_id=run.conversation_id,
+                    role="assistant",
+                    content=f"I have a few questions to help me create a better mod:\n\n{questions_text}\n\nPlease respond with your preferences.",
+                    content_type="markdown",
+                    trigger_run_id=run.id
+                )
+                db.add(assistant_message)
+                db.commit()
+            
+            return  # Exit - user will send another message to continue
         
-        emit_event_sync(db, run.id, EventType.LOG_APPEND, {"message": "Generation complete. Use 'Build' to compile to JAR.", "level": "info"})
+        # ====================================================================
+        # Phase 1-2 Complete - Ready for Build
+        # ====================================================================
+        
+        emit_event_sync(db, run.id, EventType.LOG_APPEND, {
+            "message": "✓ Generation complete. Click 'Build' to compile your mod to JAR.",
+            "level": "info"
+        })
         emit_event_sync(db, run.id, EventType.RUN_PROGRESS, {"progress": 100})
         
-        # Create assistant message
+        # Create assistant message with summary
         if run.conversation_id:
+            assistant_content = _generate_assistant_response(new_spec, applied_deltas, orchestrator_response)
             assistant_message = Message(
                 conversation_id=run.conversation_id,
                 role="assistant",
-                content=_generate_assistant_response(new_spec, spec_delta),
+                content=assistant_content,
                 content_type="markdown",
                 trigger_run_id=run.id
             )
@@ -132,15 +263,22 @@ def execute_run(run_id: str):
         run.status = "succeeded"
         run.finished_at = datetime.utcnow()
         run.result = {
+            "phase": "1-2",
             "spec_version": workspace.spec_version,
-            "items_added": len(spec_delta.get("items_to_add", [])),
-            "blocks_added": len(spec_delta.get("blocks_to_add", [])),
-            "tools_added": len(spec_delta.get("tools_to_add", []))
+            "items_count": len(new_spec.items) if new_spec else 0,
+            "blocks_count": len(new_spec.blocks) if new_spec else 0,
+            "tools_count": len(new_spec.tools) if new_spec else 0,
+            "reasoning": orchestrator_response.reasoning
         }
         
         db.commit()
         
-        emit_event_sync(db, run.id, EventType.RUN_STATUS, {"status": "succeeded"})
+        emit_event_sync(db, run.id, EventType.RUN_STATUS, {
+            "status": "succeeded",
+            "workspace_id": str(workspace.id),
+            "run_id": str(run.id),
+            "spec_version": workspace.spec_version
+        })
         
     except Exception as e:
         print(f"[RunService] Error executing run {run_id}: {e}")
@@ -152,9 +290,14 @@ def execute_run(run_id: str):
 
 def execute_build(run_id: str):
     """
-    Execute a build run in background
+    Execute a build run in background (Phase 3+)
     
-    Compiles the current workspace spec to a JAR file using the V2 pipeline.
+    Compiles the current workspace spec to a JAR file using the full pipeline:
+    Phase 3: Compiler (Spec → IR)
+    Phase 4: Planner (IR → Task DAG)
+    Phase 5: Executor (Run tasks)
+    Phase 6: Validator
+    Phase 7: Builder (Gradle)
     """
     db = SessionLocal()
     
@@ -172,7 +315,7 @@ def execute_build(run_id: str):
             return
         
         if not workspace.spec:
-            _fail_run(db, run, "No spec to build")
+            _fail_run(db, run, "No spec to build. Generate a spec first.")
             return
         
         # Update run status
@@ -180,11 +323,18 @@ def execute_build(run_id: str):
         run.started_at = datetime.utcnow()
         db.commit()
         
-        emit_event_sync(db, run.id, EventType.RUN_STATUS, {"status": "running"})
-        emit_event_sync(db, run.id, EventType.LOG_APPEND, {"message": "Starting build...", "level": "info"})
+        emit_event_sync(db, run.id, EventType.RUN_STATUS, {
+            "status": "running",
+            "workspace_id": str(workspace.id),
+            "run_id": str(run.id)
+        })
+        emit_event_sync(db, run.id, EventType.LOG_APPEND, {
+            "message": "Starting build...",
+            "level": "info"
+        })
         
         # ====================================================================
-        # Build using V2 Pipeline
+        # Build using V2 Pipeline (Phase 3-7)
         # ====================================================================
         
         try:
@@ -197,10 +347,11 @@ def execute_build(run_id: str):
             
             # Progress callback
             def progress_callback(msg: str):
-                emit_event_sync(db, run.id, EventType.LOG_APPEND, {"message": msg, "level": "info"})
-                
-                # Update progress based on message content
-                progress = _estimate_progress_from_log(msg)
+                emit_event_sync(db, run.id, EventType.LOG_APPEND, {
+                    "message": msg,
+                    "level": "info"
+                })
+                progress = _estimate_build_progress(msg)
                 if progress:
                     emit_event_sync(db, run.id, EventType.RUN_PROGRESS, {"progress": progress})
             
@@ -208,33 +359,58 @@ def execute_build(run_id: str):
             spec_data = workspace.spec
             mod_spec = ModSpec(**spec_data)
             
-            emit_event_sync(db, run.id, EventType.LOG_APPEND, {"message": f"Building mod: {mod_spec.mod_name}", "level": "info"})
-            emit_event_sync(db, run.id, EventType.TASK_STARTED, {"task": "compile"})
+            emit_event_sync(db, run.id, EventType.LOG_APPEND, {
+                "message": f"Building mod: {mod_spec.mod_name} (spec v{workspace.spec_version})",
+                "level": "info"
+            })
             
             # Initialize spec in pipeline
             pipeline.spec_manager.initialize_spec(mod_spec)
             
-            # Run the build phases (skip orchestrator since we already have a spec)
-            # Phase 1: Compiler - Spec → IR
-            emit_event_sync(db, run.id, EventType.LOG_APPEND, {"message": "Phase 1: Compiling spec to IR...", "level": "info"})
+            # Phase 3: Compiler - Spec → IR
+            emit_event_sync(db, run.id, EventType.LOG_APPEND, {
+                "message": "Phase 3: Compiling spec to IR...",
+                "level": "info"
+            })
             emit_event_sync(db, run.id, EventType.RUN_PROGRESS, {"progress": 20})
+            emit_event_sync(db, run.id, EventType.TASK_STARTED, {"task": "compiler"})
             
             mod_ir = pipeline.compiler.compile(mod_spec)
             
-            # Phase 2: Planner - IR → Task DAG
-            emit_event_sync(db, run.id, EventType.LOG_APPEND, {"message": "Phase 2: Planning tasks...", "level": "info"})
+            emit_event_sync(db, run.id, EventType.TASK_FINISHED, {"task": "compiler"})
+            emit_event_sync(db, run.id, EventType.LOG_APPEND, {
+                "message": f"✓ IR generated: {len(mod_ir.items)} items, {len(mod_ir.blocks)} blocks, {len(mod_ir.tools)} tools",
+                "level": "info"
+            })
+            
+            # Phase 4: Planner - IR → Task DAG
+            emit_event_sync(db, run.id, EventType.LOG_APPEND, {
+                "message": "Phase 4: Planning execution tasks...",
+                "level": "info"
+            })
             emit_event_sync(db, run.id, EventType.RUN_PROGRESS, {"progress": 30})
+            emit_event_sync(db, run.id, EventType.TASK_STARTED, {"task": "planner"})
             
             task_dag = pipeline.planner.plan(mod_ir, workspace_root=pipeline.workspace_dir)
             
-            # Phase 3: Executor - Run tasks
-            emit_event_sync(db, run.id, EventType.LOG_APPEND, {"message": "Phase 3: Executing tasks...", "level": "info"})
+            emit_event_sync(db, run.id, EventType.TASK_FINISHED, {"task": "planner"})
+            emit_event_sync(db, run.id, EventType.LOG_APPEND, {
+                "message": f"✓ Task plan: {task_dag.total_tasks} tasks",
+                "level": "info"
+            })
+            
+            # Phase 5: Executor - Run tasks
+            emit_event_sync(db, run.id, EventType.LOG_APPEND, {
+                "message": "Phase 5: Executing tasks...",
+                "level": "info"
+            })
             emit_event_sync(db, run.id, EventType.RUN_PROGRESS, {"progress": 40})
+            emit_event_sync(db, run.id, EventType.TASK_STARTED, {"task": "executor"})
             
             from agents.tools.tool_registry import create_tool_registry
-            tool_registry = create_tool_registry(pipeline.workspace_dir)
-            
             from agents.core.executor import Executor
+            
+            tool_registry = create_tool_registry(pipeline.workspace_dir)
             executor = Executor(
                 workspace_dir=pipeline.workspace_dir,
                 tool_registry=tool_registry
@@ -242,20 +418,36 @@ def execute_build(run_id: str):
             
             exec_result = executor.execute(task_dag, progress_callback=progress_callback)
             
-            emit_event_sync(db, run.id, EventType.TASK_FINISHED, {"task": "execute", "result": exec_result})
+            emit_event_sync(db, run.id, EventType.TASK_FINISHED, {
+                "task": "executor",
+                "completed": exec_result.get("completed_tasks", 0),
+                "total": exec_result.get("total_tasks", 0)
+            })
             
-            # Phase 4: Validator
-            emit_event_sync(db, run.id, EventType.LOG_APPEND, {"message": "Phase 4: Validating...", "level": "info"})
+            # Phase 6: Validator
+            emit_event_sync(db, run.id, EventType.LOG_APPEND, {
+                "message": "Phase 6: Validating generated files...",
+                "level": "info"
+            })
             emit_event_sync(db, run.id, EventType.RUN_PROGRESS, {"progress": 70})
             
             try:
                 validation_result = pipeline.validator.validate(ir=mod_ir)
-                emit_event_sync(db, run.id, EventType.LOG_APPEND, {"message": f"Validation passed ({validation_result.get('warnings', 0)} warnings)", "level": "info"})
+                emit_event_sync(db, run.id, EventType.LOG_APPEND, {
+                    "message": f"✓ Validation passed ({validation_result.get('warnings', 0)} warnings)",
+                    "level": "info"
+                })
             except Exception as ve:
-                emit_event_sync(db, run.id, EventType.LOG_APPEND, {"message": f"Validation warning: {ve}", "level": "warning"})
+                emit_event_sync(db, run.id, EventType.LOG_APPEND, {
+                    "message": f"⚠ Validation warning: {ve}",
+                    "level": "warning"
+                })
             
-            # Phase 5: Builder - Gradle build
-            emit_event_sync(db, run.id, EventType.LOG_APPEND, {"message": "Phase 5: Building JAR (this may take 1-2 minutes)...", "level": "info"})
+            # Phase 7: Builder - Gradle build
+            emit_event_sync(db, run.id, EventType.LOG_APPEND, {
+                "message": "Phase 7: Building JAR with Gradle (1-2 minutes)...",
+                "level": "info"
+            })
             emit_event_sync(db, run.id, EventType.RUN_PROGRESS, {"progress": 80})
             emit_event_sync(db, run.id, EventType.TASK_STARTED, {"task": "gradle_build"})
             
@@ -264,7 +456,10 @@ def execute_build(run_id: str):
                 progress_callback=progress_callback
             )
             
-            emit_event_sync(db, run.id, EventType.TASK_FINISHED, {"task": "gradle_build", "result": build_result})
+            emit_event_sync(db, run.id, EventType.TASK_FINISHED, {
+                "task": "gradle_build",
+                "status": build_result.get("status")
+            })
             
             if build_result["status"] == "success":
                 jar_path = build_result["jar_path"]
@@ -286,7 +481,8 @@ def execute_build(run_id: str):
                     meta_data={
                         "mod_id": mod_ir.mod_id,
                         "mod_name": mod_ir.mod_name,
-                        "version": mod_spec.version
+                        "version": mod_spec.version,
+                        "spec_version": workspace.spec_version
                     }
                 )
                 db.add(artifact)
@@ -297,24 +493,35 @@ def execute_build(run_id: str):
                     "artifact_id": str(artifact.id),
                     "artifact_type": "jar",
                     "file_name": artifact.file_name,
-                    "download_url": f"/api/runs/{run.id}/artifacts/{artifact.id}/download"
+                    "download_url": f"/api/runs/{run.id}/artifacts/{artifact.id}/download",
+                    "workspace_id": str(workspace.id),
+                    "run_id": str(run.id)
                 })
                 
-                emit_event_sync(db, run.id, EventType.LOG_APPEND, {"message": f"Build successful: {artifact.file_name}", "level": "info"})
+                emit_event_sync(db, run.id, EventType.LOG_APPEND, {
+                    "message": f"✓ Build successful: {artifact.file_name}",
+                    "level": "info"
+                })
                 emit_event_sync(db, run.id, EventType.RUN_PROGRESS, {"progress": 100})
                 
                 # Mark run as succeeded
                 run.status = "succeeded"
                 run.finished_at = datetime.utcnow()
                 run.result = {
+                    "phase": "build",
                     "mod_id": mod_ir.mod_id,
                     "mod_name": mod_ir.mod_name,
                     "jar_file": artifact.file_name,
-                    "artifact_id": str(artifact.id)
+                    "artifact_id": str(artifact.id),
+                    "spec_version": workspace.spec_version
                 }
                 
                 db.commit()
-                emit_event_sync(db, run.id, EventType.RUN_STATUS, {"status": "succeeded"})
+                emit_event_sync(db, run.id, EventType.RUN_STATUS, {
+                    "status": "succeeded",
+                    "workspace_id": str(workspace.id),
+                    "run_id": str(run.id)
+                })
                 
             else:
                 error_msg = build_result.get("error", "Build failed")
@@ -334,148 +541,323 @@ def execute_build(run_id: str):
         db.close()
 
 
-def _fail_run(db, run: Run, error: str):
+# ============================================================================
+# Helper Functions
+# ============================================================================
+
+def _build_conversation_context(db: DBSession, conversation_id: Optional[UUID]) -> ConversationContext:
+    """
+    Build conversation context from previous messages in the conversation.
+    
+    This provides the Orchestrator with context about what has been discussed.
+    """
+    context = ConversationContext()
+    
+    if not conversation_id:
+        return context
+    
+    # Get recent messages from conversation (limit to last 10 for context)
+    messages = db.query(Message).filter(
+        Message.conversation_id == conversation_id
+    ).order_by(
+        Message.created_at.desc()
+    ).limit(10).all()
+    
+    # Reverse to chronological order
+    messages = list(reversed(messages))
+    
+    for msg in messages:
+        if msg.role == "user" and msg.content:
+            context.user_prompts.append(msg.content)
+        elif msg.role == "assistant" and msg.content:
+            # Extract any decisions from assistant messages
+            if "added:" in msg.content.lower():
+                context.decisions_made.append(msg.content[:100])
+    
+    return context
+
+
+def _load_spec_from_workspace(workspace: Workspace) -> Optional[ModSpec]:
+    """
+    Load ModSpec from workspace.spec (JSONB column).
+    
+    Returns None if workspace has no spec.
+    """
+    if not workspace.spec:
+        return None
+    
+    try:
+        return ModSpec(**workspace.spec)
+    except Exception as e:
+        print(f"[RunService] Warning: Failed to parse workspace spec: {e}")
+        return None
+
+
+def _apply_deltas_to_workspace(
+    db: DBSession,
+    workspace: Workspace,
+    deltas: List[SpecDelta],
+    run: Run,
+    change_source: str = "ai",
+    change_notes: str = ""
+) -> tuple[Optional[ModSpec], List[SpecDelta]]:
+    """
+    Apply spec deltas to workspace and persist to DB.
+    
+    This function:
+    1. Creates a SpecManager (in-memory, no file system)
+    2. Loads current spec from workspace
+    3. Applies each delta
+    4. Updates workspace.spec and workspace.spec_version
+    5. Creates SpecHistory entry
+    6. Emits spec.patch events for each delta
+    
+    Returns:
+        Tuple of (new_spec, applied_deltas)
+    """
+    if not deltas:
+        # No deltas to apply
+        current_spec = _load_spec_from_workspace(workspace)
+        return current_spec, []
+    
+    # Create temporary SpecManager (we'll handle DB persistence ourselves)
+    temp_dir = GENERATED_DIR / f"temp_{run.id}"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    spec_manager = SpecManager(workspace_dir=temp_dir)
+    
+    # Load or initialize spec
+    current_spec = _load_spec_from_workspace(workspace)
+    if current_spec is None:
+        # Initialize with empty spec
+        current_spec = ModSpec(mod_name="New Mod")
+    
+    spec_manager.initialize_spec(current_spec)
+    
+    # Apply each delta
+    applied_deltas = []
+    for i, delta in enumerate(deltas):
+        try:
+            current_spec = spec_manager.apply_delta(delta)
+            applied_deltas.append(delta)
+            
+            # Emit patch event
+            emit_event_sync(db, run.id, EventType.SPEC_PATCH, {
+                "workspace_id": str(workspace.id),
+                "run_id": str(run.id),
+                "delta_index": i,
+                "operation": delta.operation,
+                "path": delta.path,
+                "success": True
+            })
+            
+        except Exception as e:
+            print(f"[RunService] Warning: Failed to apply delta {i}: {e}")
+            emit_event_sync(db, run.id, EventType.LOG_APPEND, {
+                "message": f"⚠ Failed to apply change {i}: {e}",
+                "level": "warning"
+            })
+    
+    # Persist to workspace
+    if current_spec:
+        # Update workspace.spec
+        workspace.spec = current_spec.model_dump()
+        workspace.spec_version += 1
+        workspace.last_modified_at = datetime.utcnow()
+        
+        # Create SpecHistory entry
+        history = SpecHistory(
+            workspace_id=workspace.id,
+            version=workspace.spec_version,
+            spec=current_spec.model_dump(),
+            delta={
+                "deltas": [d.model_dump(exclude_none=True) for d in applied_deltas],
+                "run_id": str(run.id)
+            },
+            change_source=change_source,
+            change_notes=change_notes
+        )
+        db.add(history)
+        db.commit()
+    
+    # Cleanup temp dir
+    try:
+        import shutil
+        shutil.rmtree(temp_dir, ignore_errors=True)
+    except:
+        pass
+    
+    return current_spec, applied_deltas
+
+
+def _fail_run(db: DBSession, run: Run, error: str):
     """Mark a run as failed"""
     run.status = "failed"
     run.finished_at = datetime.utcnow()
     run.error = error
     db.commit()
     
-    emit_event_sync(db, run.id, EventType.LOG_ERROR, {"message": error, "level": "error"})
-    emit_event_sync(db, run.id, EventType.RUN_STATUS, {"status": "failed", "error": error})
+    emit_event_sync(db, run.id, EventType.LOG_ERROR, {
+        "message": error,
+        "level": "error"
+    })
+    emit_event_sync(db, run.id, EventType.RUN_STATUS, {
+        "status": "failed",
+        "error": error,
+        "workspace_id": str(run.workspace_id) if run.workspace_id else None,
+        "run_id": str(run.id)
+    })
 
 
-def _estimate_progress_from_log(msg: str) -> Optional[int]:
-    """Estimate progress from log message"""
-    if "Phase 1" in msg or "Converting" in msg:
-        return 10
-    elif "Phase 2" in msg or "Applying" in msg:
+def _estimate_build_progress(msg: str) -> Optional[int]:
+    """Estimate progress from log message during build"""
+    msg_lower = msg.lower()
+    if "phase 3" in msg_lower or "compiling spec" in msg_lower:
         return 20
-    elif "Phase 3" in msg or "Compiling" in msg:
+    elif "phase 4" in msg_lower or "planning" in msg_lower:
         return 30
-    elif "Phase 4" in msg or "Planning" in msg:
-        return 40
-    elif "Phase 5" in msg or "Executing" in msg:
+    elif "phase 5" in msg_lower or "executing" in msg_lower:
         return 50
-    elif "Phase 6" in msg or "Validating" in msg:
+    elif "phase 6" in msg_lower or "validating" in msg_lower:
         return 70
-    elif "Phase 7" in msg or "Building" in msg:
-        return 80
+    elif "phase 7" in msg_lower or "building" in msg_lower or "gradle" in msg_lower:
+        return 85
+    elif "build successful" in msg_lower:
+        return 100
     return None
 
 
-# ============================================================================
-# Placeholder Functions (Agent team will implement)
-# ============================================================================
-
-def _generate_spec_delta_placeholder(user_prompt: str) -> Dict[str, Any]:
+def _generate_assistant_response(
+    spec: Optional[ModSpec],
+    applied_deltas: List[SpecDelta],
+    orchestrator_response: OrchestratorResponse
+) -> str:
     """
-    Placeholder for AI spec delta generation
-    
-    TODO: Agent team will implement this using Orchestrator
+    Generate assistant response message summarizing what was created/changed.
     """
-    # For now, generate a simple placeholder delta
-    import re
-    
-    # Try to extract item name from prompt
-    prompt_lower = user_prompt.lower()
-    
-    # Default item
-    item_name = "Custom Item"
-    item_id = "custom_item"
-    
-    # Try to extract meaningful name
-    match = re.search(r'create\s+(?:a\s+)?([a-z\s]+)(?:\s+item)?', prompt_lower)
-    if match:
-        item_name = match.group(1).strip().title()
-        item_id = item_name.lower().replace(' ', '_')
-    
-    return {
-        "delta_type": "update",
-        "mod_name": "Custom Mod",
-        "mod_id": "custom_mod",
-        "items_to_add": [
-            {
-                "item_name": item_name,
-                "item_id": item_id,
-                "description": f"A custom {item_name} generated by AI",
-                "max_stack_size": 64,
-                "rarity": "COMMON",
-                "fireproof": False,
-                "creative_tab": "MISC"
-            }
-        ],
-        "blocks_to_add": [],
-        "tools_to_add": []
-    }
-
-
-def _apply_spec_delta_placeholder(current_spec: Dict[str, Any], delta: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Placeholder for applying spec delta
-    
-    TODO: Use SpecManager for proper delta application
-    """
-    new_spec = current_spec.copy()
-    
-    # Update basic fields
-    if delta.get("mod_name"):
-        new_spec["mod_name"] = delta["mod_name"]
-    if delta.get("mod_id"):
-        new_spec["mod_id"] = delta["mod_id"]
-    
-    # Initialize lists if needed
-    if "items" not in new_spec:
-        new_spec["items"] = []
-    if "blocks" not in new_spec:
-        new_spec["blocks"] = []
-    if "tools" not in new_spec:
-        new_spec["tools"] = []
-    
-    # Add new items
-    for item in delta.get("items_to_add", []):
-        new_spec["items"].append(item)
-    
-    # Add new blocks
-    for block in delta.get("blocks_to_add", []):
-        new_spec["blocks"].append(block)
-    
-    # Add new tools
-    for tool in delta.get("tools_to_add", []):
-        new_spec["tools"].append(tool)
-    
-    # Set version if not set
-    if "version" not in new_spec:
-        new_spec["version"] = "1.0.0"
-    
-    return new_spec
-
-
-def _generate_assistant_response(spec: Dict[str, Any], delta: Dict[str, Any]) -> str:
-    """Generate assistant response message"""
-    items_added = len(delta.get("items_to_add", []))
-    blocks_added = len(delta.get("blocks_to_add", []))
-    tools_added = len(delta.get("tools_to_add", []))
+    if not spec:
+        return "I've processed your request, but no spec was generated. Please try again with more details."
     
     parts = []
     
+    # Count what was added
+    items_added = sum(1 for d in applied_deltas if d.path and "items" in d.path and d.operation == "add")
+    blocks_added = sum(1 for d in applied_deltas if d.path and "blocks" in d.path and d.operation == "add")
+    tools_added = sum(1 for d in applied_deltas if d.path and "tools" in d.path and d.operation == "add")
+    
+    # Fallback: count from spec if deltas don't have path info
+    if items_added == 0 and blocks_added == 0 and tools_added == 0:
+        items_added = len(spec.items)
+        blocks_added = len(spec.blocks)
+        tools_added = len(spec.tools)
+    
+    # Build summary
     if items_added > 0:
-        items = delta.get("items_to_add", [])
-        item_names = ", ".join([i.get("item_name", "Unknown") for i in items])
-        parts.append(f"**Items added:** {item_names}")
+        item_names = ", ".join([item.item_name for item in spec.items[-items_added:]])
+        parts.append(f"**Items:** {item_names}")
     
     if blocks_added > 0:
-        blocks = delta.get("blocks_to_add", [])
-        block_names = ", ".join([b.get("block_name", "Unknown") for b in blocks])
-        parts.append(f"**Blocks added:** {block_names}")
+        block_names = ", ".join([block.block_name for block in spec.blocks[-blocks_added:]])
+        parts.append(f"**Blocks:** {block_names}")
     
     if tools_added > 0:
-        tools = delta.get("tools_to_add", [])
-        tool_names = ", ".join([t.get("tool_name", "Unknown") for t in tools])
-        parts.append(f"**Tools added:** {tool_names}")
+        tool_names = ", ".join([tool.tool_name for tool in spec.tools[-tools_added:]])
+        parts.append(f"**Tools:** {tool_names}")
     
     if not parts:
-        return "I've updated the mod specification. Click **Build** to compile your mod."
+        return f"I've updated the mod specification for **{spec.mod_name}**.\n\nClick **Build** when you're ready to compile your mod to a JAR file."
     
-    return "I've updated the mod specification:\n\n" + "\n".join(parts) + "\n\nClick **Build** when you're ready to compile your mod."
+    content = f"I've updated **{spec.mod_name}** with the following:\n\n"
+    content += "\n".join(parts)
+    content += "\n\n---\n\n"
+    content += "You can:\n"
+    content += "- **Edit the spec** directly in the editor on the right\n"
+    content += "- **Send another message** to add more items or make changes\n"
+    content += "- **Click Build** when you're ready to compile your mod"
+    
+    return content
 
+
+# ============================================================================
+# Additional Entry Points for Spec Operations
+# ============================================================================
+
+def apply_spec_delta_from_api(
+    workspace_id: str,
+    deltas: List[Dict[str, Any]],
+    change_source: str = "user",
+    change_notes: str = ""
+) -> Dict[str, Any]:
+    """
+    Apply spec deltas from API (user edits).
+    
+    This is called when user directly edits the spec or applies patches.
+    It creates a new spec version without creating a Run.
+    
+    Returns:
+        Dict with new spec_version and status
+    """
+    db = SessionLocal()
+    
+    try:
+        workspace_uuid = UUID(workspace_id)
+        workspace = db.query(Workspace).filter(Workspace.id == workspace_uuid).first()
+        
+        if not workspace:
+            return {"success": False, "error": "Workspace not found"}
+        
+        # Convert dict deltas to SpecDelta objects
+        spec_deltas = []
+        for d in deltas:
+            spec_deltas.append(SpecDelta(**d))
+        
+        # Create temporary spec manager
+        temp_dir = GENERATED_DIR / f"temp_api_{workspace_id}"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        spec_manager = SpecManager(workspace_dir=temp_dir)
+        
+        # Load current spec
+        current_spec = _load_spec_from_workspace(workspace)
+        if current_spec is None:
+            current_spec = ModSpec(mod_name="New Mod")
+        
+        spec_manager.initialize_spec(current_spec)
+        
+        # Apply deltas
+        for delta in spec_deltas:
+            current_spec = spec_manager.apply_delta(delta)
+        
+        # Persist
+        workspace.spec = current_spec.model_dump()
+        workspace.spec_version += 1
+        workspace.last_modified_at = datetime.utcnow()
+        
+        history = SpecHistory(
+            workspace_id=workspace.id,
+            version=workspace.spec_version,
+            spec=current_spec.model_dump(),
+            delta={"deltas": [d.model_dump(exclude_none=True) for d in spec_deltas]},
+            change_source=change_source,
+            change_notes=change_notes
+        )
+        db.add(history)
+        db.commit()
+        
+        # Cleanup
+        try:
+            import shutil
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        except:
+            pass
+        
+        return {
+            "success": True,
+            "spec_version": workspace.spec_version,
+            "spec": current_spec.model_dump()
+        }
+        
+    except Exception as e:
+        print(f"[RunService] Error applying spec delta: {e}")
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
+    finally:
+        db.close()

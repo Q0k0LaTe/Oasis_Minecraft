@@ -59,6 +59,11 @@ class UserSession(Base):
     Used for authentication tokens (like JWT sessions)
     
     Note: This is NOT the conversation session - that's now handled by Workspace + Conversation
+    
+    Security features:
+    - HttpOnly Cookie for token storage (XSS protection)
+    - Session expiration (expires_at)
+    - Can be revoked server-side (is_active)
     """
     __tablename__ = "sessions"
 
@@ -67,6 +72,7 @@ class UserSession(Base):
     session_token = Column(String(255), unique=True, nullable=False, index=True)  # UUID format token
     name = Column(String(255), nullable=True)  # Optional: session name for user identification
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)  # Session expiration time
     last_used_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     user_agent = Column(Text, nullable=True)  # Optional: record login device information
     ip_address = Column(String(45), nullable=True)  # Optional: record IP address
@@ -77,6 +83,11 @@ class UserSession(Base):
 
     def __repr__(self):
         return f"<UserSession(id={self.id}, user_id={self.user_id}, token='{self.session_token[:8]}...')>"
+    
+    def is_expired(self) -> bool:
+        """Check if session has expired"""
+        from datetime import datetime, timezone
+        return datetime.now(timezone.utc) > self.expires_at
 
 
 class Workspace(Base):

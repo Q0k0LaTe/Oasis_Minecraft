@@ -17,6 +17,7 @@ from .event_service import (
 from .run_service import (
     execute_run,
     execute_build,
+    apply_spec_delta_from_api,
 )
 
 __all__ = [
@@ -35,4 +36,5 @@ __all__ = [
     # Run execution
     "execute_run",
     "execute_build",
+    "apply_spec_delta_from_api",
 ]
