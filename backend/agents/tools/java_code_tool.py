@@ -5,6 +5,7 @@ This tool creates all Java source files for the mod (main class, items, blocks, 
 """
 from pathlib import Path
 from typing import Dict, Any, List
+from textwrap import dedent
 
 
 def generate_java_code(
@@ -40,41 +41,43 @@ def generate_java_code(
     tools = tools or []
 
     # Generate main mod class
-    main_class = f"""package {package_name};
+    main_class = dedent(f"""\
+        package {package_name};
 
-import net.fabricmc.api.ModInitializer;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import {package_name}.item.ModItems;
-import {package_name}.block.ModBlocks;
+        import net.fabricmc.api.ModInitializer;
+        import org.slf4j.Logger;
+        import org.slf4j.LoggerFactory;
+        import {package_name}.item.ModItems;
+        import {package_name}.block.ModBlocks;
 
-public class {main_class_name} implements ModInitializer {{
-\tpublic static final String MOD_ID = "{mod_id}";
-\tpublic static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
+        public class {main_class_name} implements ModInitializer {{
+        \tpublic static final String MOD_ID = "{mod_id}";
+        \tpublic static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
 
-\t@Override
-\tpublic void onInitialize() {{
-\t\tModItems.registerModItems();
-\t\tModBlocks.registerModBlocks();
-\t\tLOGGER.info("Loaded {{}} mod!", MOD_ID);
-\t}}
-}}
-"""
+        \t@Override
+        \tpublic void onInitialize() {{
+        \t\tModItems.registerModItems();
+        \t\tModBlocks.registerModBlocks();
+        \t\tLOGGER.info("Loaded {{}} mod!", MOD_ID);
+        \t}}
+        }}
+        """)
     main_class_path = java_path / f"{main_class_name}.java"
     main_class_path.write_text(main_class)
 
     # Generate client class
-    client_class = f"""package {package_name};
+    client_class = dedent(f"""\
+        package {package_name};
 
-import net.fabricmc.api.ClientModInitializer;
+        import net.fabricmc.api.ClientModInitializer;
 
-public class {main_class_name}Client implements ClientModInitializer {{
-\t@Override
-\tpublic void onInitializeClient() {{
-\t\t// Client initialization
-\t}}
-}}
-"""
+        public class {main_class_name}Client implements ClientModInitializer {{
+        \t@Override
+        \tpublic void onInitializeClient() {{
+        \t\t// Client initialization
+        \t}}
+        }}
+        """)
     client_class_path = client_path / f"{main_class_name}Client.java"
     client_class_path.write_text(client_class)
 
@@ -126,22 +129,23 @@ def _generate_mod_items_class(
         )
 
     # Generate class
-    items_class = f"""package {package_name}.item;
+    items_class = dedent(f"""\
+        package {package_name}.item;
 
-import net.minecraft.item.Item;
-import net.minecraft.registry.Registries;
-import net.minecraft.registry.Registry;
-import net.minecraft.util.Identifier;
-import {package_name}.{main_class_name};
+        import net.minecraft.item.Item;
+        import net.minecraft.registry.Registries;
+        import net.minecraft.registry.Registry;
+        import net.minecraft.util.Identifier;
+        import {package_name}.{main_class_name};
 
-public class ModItems {{
-{chr(10).join(item_declarations)}
+        public class ModItems {{
+        {chr(10).join(item_declarations)}
 
-\tpublic static void registerModItems() {{
-{chr(10).join(item_registrations)}
-\t}}
-}}
-"""
+        \tpublic static void registerModItems() {{
+        {chr(10).join(item_registrations)}
+        \t}}
+        }}
+        """)
     items_path = java_path / "item" / "ModItems.java"
     items_path.parent.mkdir(parents=True, exist_ok=True)
     items_path.write_text(items_class)
@@ -187,27 +191,28 @@ def _generate_mod_blocks_class(
         )
 
     # Generate class
-    blocks_class = f"""package {package_name}.block;
+    blocks_class = dedent(f"""\
+        package {package_name}.block;
 
-import net.minecraft.block.Block;
-import net.minecraft.item.BlockItem;
-import net.minecraft.item.Item;
-import net.minecraft.registry.Registries;
-import net.minecraft.registry.Registry;
-import net.minecraft.util.Identifier;
-import {package_name}.{main_class_name};
+        import net.minecraft.block.Block;
+        import net.minecraft.item.BlockItem;
+        import net.minecraft.item.Item;
+        import net.minecraft.registry.Registries;
+        import net.minecraft.registry.Registry;
+        import net.minecraft.util.Identifier;
+        import {package_name}.{main_class_name};
 
-public class ModBlocks {{
-{chr(10).join(block_declarations)}
+        public class ModBlocks {{
+        {chr(10).join(block_declarations)}
 
-\tpublic static void registerModBlocks() {{
-{chr(10).join(block_registrations)}
+        \tpublic static void registerModBlocks() {{
+        {chr(10).join(block_registrations)}
 
-\t\t// Register block items
-{chr(10).join(block_item_registrations)}
-\t}}
-}}
-"""
+        \t\t// Register block items
+        {chr(10).join(block_item_registrations)}
+        \t}}
+        }}
+        """)
     blocks_path = java_path / "block" / "ModBlocks.java"
     blocks_path.parent.mkdir(parents=True, exist_ok=True)
     blocks_path.write_text(blocks_class)

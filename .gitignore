@@ -83,6 +83,7 @@ yarn.lock
 htmlcov/
 .tox/
 .nox/
+backend/agents/test/
 
 # Jupyter Notebook
 .ipynb_checkpoints
