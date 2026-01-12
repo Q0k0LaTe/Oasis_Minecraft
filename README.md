@@ -544,4 +544,10 @@ MIT License
 
 **Made with ❤️ for the Minecraft modding community**
 
+<a href="https://github.com/TheCYPER/Oasis_Minecraft/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=TheCYPER/Oasis_Minecraft" />
+</a>
+
+Made with [contrib.rocks](https://contrib.rocks).
+
 Enjoy creating mods! 🎮✨
