@@ -34,10 +34,10 @@ def verify_google_token(id_token_string: str) -> Optional[Dict[str, any]]:
     Raises:
         ValueError: If token verification fails
     """
-    if not GOOGLE_CLIENT_ID:
-        raise ValueError('Google Client ID not configured')
-    
     try:
+        # Check if Google Client ID is configured
+        if not GOOGLE_CLIENT_ID:
+            raise ValueError('Google Client ID not configured')
         # Verify the token
         # This will raise ValueError if token is invalid
         idinfo = id_token.verify_oauth2_token(

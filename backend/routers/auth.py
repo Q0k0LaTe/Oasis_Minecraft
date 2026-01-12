@@ -1,9 +1,19 @@
 """
 Authentication router
 FastAPI routes for user registration and login
+
+Security features:
+- HttpOnly Cookie for session storage (XSS protection)
+- Session expiration (configurable, default 7 days)
+- Bearer token support for API clients
 """
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, status
+from datetime import datetime, timedelta, timezone
+from fastapi import APIRouter, Depends, HTTPException, status, Header, Cookie, Response
+from typing import Optional
+
+from auth.dependencies import get_session_token
+from auth.cookie import set_session_cookie, clear_session_cookie
 from sqlalchemy.orm import Session
 
 from database import get_db, User, UserSession
@@ -15,14 +25,45 @@ from auth.schemas import (
     VerifyCodeRequest, VerifyCodeResponse,
     GoogleLoginRequest, GoogleLoginResponse,
     SetUsernameRequest, SetUsernameResponse,
+    LogoutResponse,
+    LogoutAllResponse,
+    DeactivateRequest, DeactivateResponse,
 )
 from utils.password import hash_password, verify_password
 from auth.verification import generate_verification_code, store_verification_code, check_code, verify_code, normalize_email
 from services.email_service import send_verification_code as send_email_verification_code
 from auth.google_auth import verify_google_token
-from config import GOOGLE_CLIENT_ID
+from config import GOOGLE_CLIENT_ID, SESSION_EXPIRE_SECONDS
 
 router = APIRouter(prefix="/api/auth", tags=["authentication"])
+
+
+def create_session(db: Session, user_id: int) -> UserSession:
+    """
+    Create a new session with expiration time
+    
+    Args:
+        db: Database session
+        user_id: User ID to create session for
+    
+    Returns:
+        Created UserSession object
+    """
+    session_token = str(uuid.uuid4())
+    expires_at = datetime.now(timezone.utc) + timedelta(seconds=SESSION_EXPIRE_SECONDS)
+    
+    new_session = UserSession(
+        user_id=user_id,
+        session_token=session_token,
+        expires_at=expires_at,
+        is_active=True
+    )
+    
+    db.add(new_session)
+    db.commit()
+    db.refresh(new_session)
+    
+    return new_session
 
 
 @router.get("/google-client-id")
@@ -112,6 +153,8 @@ async def register(
     
     Requires valid verification code before creating account.
     Username and email must be unique.
+    
+    Note: Registration does NOT auto-login. User must call /login after registration.
     """
     # Normalize email for consistent storage and lookup
     normalized_email = normalize_email(request.email)
@@ -170,13 +213,18 @@ async def register(
 @router.post("/login", response_model=LoginResponse)
 async def login(
     request: LoginRequest,
+    response: Response,
     db: Session = Depends(get_db)
 ):
     """
     Login user and create session
     
     Can login with either username or email.
-    Automatically creates a new session (like ChatGPT's new conversation).
+    Creates a new session and sets HttpOnly cookie.
+    
+    Security:
+    - Session token stored in HttpOnly cookie (XSS protection)
+    - Session expires after configured duration (default 7 days)
     """
     # Validate that at least one identifier is provided
     if not request.username and not request.email:
@@ -224,17 +272,11 @@ async def login(
             detail="User account is disabled"
         )
     
-    # Create new session (like ChatGPT's new conversation)
-    session_token = str(uuid.uuid4())
-    new_session = UserSession(
-        user_id=user.id,
-        session_token=session_token,
-        is_active=True
-    )
+    # Create new session with expiration
+    new_session = create_session(db, user.id)
     
-    db.add(new_session)
-    db.commit()
-    db.refresh(new_session)
+    # Set HttpOnly cookie
+    set_session_cookie(response, new_session.session_token)
     
     return LoginResponse(
         success=True,
@@ -257,13 +299,14 @@ async def login(
 @router.post("/google-login", response_model=GoogleLoginResponse)
 async def google_login(
     request: GoogleLoginRequest,
+    response: Response,
     db: Session = Depends(get_db)
 ):
     """
     Login with Google OAuth
     
     Verifies Google ID Token and either:
-    - Creates a session for existing users
+    - Creates a session for existing users (sets HttpOnly cookie)
     - Returns requires_username=true for first-time users
     """
     # Verify Google ID Token
@@ -301,17 +344,11 @@ async def google_login(
         
         db.commit()
         
-        # Create new session
-        session_token = str(uuid.uuid4())
-        new_session = UserSession(
-            user_id=user.id,
-            session_token=session_token,
-            is_active=True
-        )
+        # Create new session with expiration
+        new_session = create_session(db, user.id)
         
-        db.add(new_session)
-        db.commit()
-        db.refresh(new_session)
+        # Set HttpOnly cookie
+        set_session_cookie(response, new_session.session_token)
         
         return GoogleLoginResponse(
             success=True,
@@ -352,12 +389,13 @@ async def google_login(
 @router.post("/set-username", response_model=SetUsernameResponse, status_code=status.HTTP_201_CREATED)
 async def set_username(
     request: SetUsernameRequest,
+    response: Response,
     db: Session = Depends(get_db)
 ):
     """
     Set username for first-time Google login users
     
-    Creates a new user account with Google OAuth information.
+    Creates a new user account with Google OAuth information and sets HttpOnly cookie.
     """
     # Verify Google ID Token again for security
     user_info = verify_google_token(request.id_token)
@@ -414,17 +452,11 @@ async def set_username(
     db.commit()
     db.refresh(new_user)
     
-    # Create new session
-    session_token = str(uuid.uuid4())
-    new_session = UserSession(
-        user_id=new_user.id,
-        session_token=session_token,
-        is_active=True
-    )
+    # Create new session with expiration
+    new_session = create_session(db, new_user.id)
     
-    db.add(new_session)
-    db.commit()
-    db.refresh(new_session)
+    # Set HttpOnly cookie
+    set_session_cookie(response, new_session.session_token)
     
     return SetUsernameResponse(
         success=True,
@@ -443,3 +475,230 @@ async def set_username(
         )
     )
 
+
+@router.post("/logout", response_model=LogoutResponse)
+async def logout(
+    response: Response,
+    session_token: Optional[str] = Cookie(None, alias="session_token"),
+    authorization: Optional[str] = Header(None),
+    db: Session = Depends(get_db)
+):
+    """
+    Logout from current session
+    
+    Invalidates the current session token and clears the HttpOnly cookie.
+    
+    Idempotent: returns success even if token is already invalid or doesn't exist
+    (to prevent information leakage about token existence).
+    """
+    # Get token from cookie or header
+    token = get_session_token(session_token, authorization)
+    
+    revoked = False
+    if token:
+        # Try to find and revoke the session
+        session = db.query(UserSession).filter(
+            UserSession.session_token == token
+        ).first()
+        
+        if session and session.is_active:
+            session.is_active = False
+            db.commit()
+            revoked = True
+    
+    # Always clear the cookie
+    clear_session_cookie(response)
+    
+    # Always return success (idempotent - don't leak token existence)
+    return LogoutResponse(
+        success=True,
+        message="Logout successful",
+        revoked=revoked
+    )
+
+
+@router.post("/logout-all", response_model=LogoutAllResponse)
+async def logout_all(
+    response: Response,
+    session_token: Optional[str] = Cookie(None, alias="session_token"),
+    authorization: Optional[str] = Header(None),
+    db: Session = Depends(get_db)
+):
+    """
+    Logout from all sessions
+    
+    Invalidates all active sessions for the current user and clears the HttpOnly cookie.
+    Requires a valid session token to identify the user.
+    """
+    # Get token from cookie or header
+    token = get_session_token(session_token, authorization)
+    
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+    
+    # Find the current session to get user_id (check expiration)
+    now = datetime.now(timezone.utc)
+    session = db.query(UserSession).filter(
+        UserSession.session_token == token,
+        UserSession.is_active == True,
+        UserSession.expires_at > now
+    ).first()
+    
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired session",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+    
+    user_id = session.user_id
+    
+    # Revoke all active sessions for this user
+    revoked_count = db.query(UserSession).filter(
+        UserSession.user_id == user_id,
+        UserSession.is_active == True
+    ).update({"is_active": False})
+    
+    db.commit()
+    
+    # Clear the cookie
+    clear_session_cookie(response)
+    
+    return LogoutAllResponse(
+        success=True,
+        message=f"Logged out from {revoked_count} session(s)",
+        revoked_count=revoked_count
+    )
+
+
+@router.post("/deactivate", response_model=DeactivateResponse)
+async def deactivate(
+    request: DeactivateRequest,
+    response: Response,
+    session_token: Optional[str] = Cookie(None, alias="session_token"),
+    authorization: Optional[str] = Header(None),
+    db: Session = Depends(get_db)
+):
+    """
+    Deactivate user account (soft delete)
+    
+    Sets User.is_active=False, invalidates all sessions, and clears the HttpOnly cookie.
+    
+    Requires additional verification:
+    - For email/password users: must provide password
+    - For Google OAuth users: must provide valid id_token
+    
+    Idempotent: can be called multiple times without error.
+    """
+    # Get token from cookie or header
+    token = get_session_token(session_token, authorization)
+    
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+    
+    # Find the current session to get user (check expiration)
+    now = datetime.now(timezone.utc)
+    session = db.query(UserSession).filter(
+        UserSession.session_token == token,
+        UserSession.is_active == True,
+        UserSession.expires_at > now
+    ).first()
+    
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired session",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+    
+    user = db.query(User).filter(User.id == session.user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    # Check if already deactivated (idempotent)
+    if not user.is_active:
+        clear_session_cookie(response)
+        return DeactivateResponse(
+            success=True,
+            message="Account is already deactivated"
+        )
+    
+    # Verify based on auth_provider
+    if user.auth_provider == 'email':
+        # Email/password users must provide password
+        if not request.password:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Password required for email/password accounts"
+            )
+        
+        if not user.password_hash:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Password not set for this account"
+            )
+        
+        if not verify_password(request.password, user.password_hash):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid password"
+            )
+    
+    elif user.auth_provider == 'google':
+        # Google OAuth users must provide valid id_token
+        if not request.id_token:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Google ID token required for Google OAuth accounts"
+            )
+        
+        # Verify the token and ensure it matches the user
+        user_info = verify_google_token(request.id_token)
+        if not user_info:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid Google token"
+            )
+        
+        # Verify the token belongs to this user
+        if user_info['sub'] != user.google_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Token does not match this account"
+            )
+    
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unknown auth provider: {user.auth_provider}"
+        )
+    
+    # Deactivate user and all sessions
+    user.is_active = False
+    
+    # Revoke all active sessions for this user
+    db.query(UserSession).filter(
+        UserSession.user_id == user.id,
+        UserSession.is_active == True
+    ).update({"is_active": False})
+    
+    db.commit()
+    
+    # Clear the cookie
+    clear_session_cookie(response)
+    
+    return DeactivateResponse(
+        success=True,
+        message="Account deactivated successfully"
+    )

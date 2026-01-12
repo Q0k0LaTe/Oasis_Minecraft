@@ -2,7 +2,18 @@
 Routers package
 FastAPI route handlers organized by domain
 """
-from . import auth, jobs, jobs_v2, sessions
+from . import auth
+from . import workspaces
+from . import conversations
+from . import runs
+from . import assets
+from . import subscriptions
 
-__all__ = ["auth", "jobs", "jobs_v2", "sessions"]
-
+__all__ = [
+    "auth",
+    "workspaces",
+    "conversations",
+    "runs",
+    "assets",
+    "subscriptions",
+]

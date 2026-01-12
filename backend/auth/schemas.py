@@ -120,6 +120,34 @@ class SetUsernameResponse(BaseModel):
     user: Optional['UserInfo'] = None
 
 
+class LogoutResponse(BaseModel):
+    """Logout response"""
+    success: bool
+    message: str
+    revoked: bool = Field(False, description="Whether a session was actually revoked")
+
+
+class LogoutAllResponse(BaseModel):
+    """Logout all sessions response"""
+    success: bool
+    message: str
+    revoked_count: int = Field(0, description="Number of sessions revoked")
+
+
+class DeactivateRequest(BaseModel):
+    """Deactivate account request"""
+    # For email/password users: require password
+    password: Optional[str] = Field(None, description="Password (required for email/password users)")
+    # For Google OAuth users: require id_token
+    id_token: Optional[str] = Field(None, description="Google ID Token (required for Google OAuth users)")
+
+
+class DeactivateResponse(BaseModel):
+    """Deactivate account response"""
+    success: bool
+    message: str
+
+
 # Update forward references
 RegisterResponse.model_rebuild()
 LoginResponse.model_rebuild()
