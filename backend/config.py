@@ -124,26 +124,3 @@ VERIFICATION_CODE_LENGTH = int(os.getenv("VERIFICATION_CODE_LENGTH", "6"))  # 6-
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 # Note: GOOGLE_CLIENT_SECRET is not required for ID token verification
 # We only need CLIENT_ID to verify tokens from Google
-
-# Admin Configuration
-# Comma-separated list of admin email addresses
-ADMIN_EMAILS = [email.strip().lower() for email in os.getenv("ADMIN_EMAILS", "").split(",") if email.strip()]
-
-# =============================================================================
-# Session & Cookie Configuration
-# =============================================================================
-# Session duration in seconds (default: 7 days)
-SESSION_EXPIRE_DAYS = int(os.getenv("SESSION_EXPIRE_DAYS", "7"))
-SESSION_EXPIRE_SECONDS = SESSION_EXPIRE_DAYS * 24 * 60 * 60
-
-# Cookie settings
-SESSION_COOKIE_NAME = "session_token"
-SESSION_COOKIE_MAX_AGE = SESSION_EXPIRE_SECONDS  # Same as session expiry
-
-# Security settings - adjust for production
-# In development: Secure=False allows HTTP, SameSite=Lax for convenience
-# In production: Secure=True requires HTTPS, SameSite=Strict for max security
-IS_PRODUCTION = os.getenv("ENVIRONMENT", "development").lower() == "production"
-SESSION_COOKIE_SECURE = IS_PRODUCTION  # True in production (HTTPS only)
-SESSION_COOKIE_SAMESITE = "strict" if IS_PRODUCTION else "lax"  # CSRF protection
-SESSION_COOKIE_DOMAIN = os.getenv("SESSION_COOKIE_DOMAIN", None)  # None = same domain only
