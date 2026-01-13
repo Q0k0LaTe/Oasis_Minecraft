@@ -34,7 +34,7 @@ class User(Base):
     """
     __tablename__ = "users"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=generate_uuid, index=True)
     username = Column(String(50), unique=True, nullable=False, index=True)
     email = Column(String(255), unique=True, nullable=False, index=True)
     password_hash = Column(String(255), nullable=True)  # bcrypt hashed password (nullable for Google OAuth users)
@@ -68,7 +68,7 @@ class UserSession(Base):
     __tablename__ = "sessions"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     session_token = Column(String(255), unique=True, nullable=False, index=True)  # UUID format token
     name = Column(String(255), nullable=True)  # Optional: session name for user identification
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -103,7 +103,7 @@ class Workspace(Base):
     __tablename__ = "workspaces"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=generate_uuid)
-    owner_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     cover_image_url = Column(String(500), nullable=True)

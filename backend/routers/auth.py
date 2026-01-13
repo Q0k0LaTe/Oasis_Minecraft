@@ -28,6 +28,8 @@ from auth.schemas import (
     LogoutResponse,
     LogoutAllResponse,
     DeactivateRequest, DeactivateResponse,
+    DeleteAccountRequest, DeleteAccountResponse,
+    ReactivateRequest, ReactivateResponse,
 )
 from utils.password import hash_password, verify_password
 from auth.verification import generate_verification_code, store_verification_code, check_code, verify_code, normalize_email
@@ -38,7 +40,7 @@ from config import GOOGLE_CLIENT_ID, SESSION_EXPIRE_SECONDS
 router = APIRouter(prefix="/api/auth", tags=["authentication"])
 
 
-def create_session(db: Session, user_id: int) -> UserSession:
+def create_session(db: Session, user_id: uuid.UUID) -> UserSession:
     """
     Create a new session with expiration time
     
@@ -701,4 +703,251 @@ async def deactivate(
     return DeactivateResponse(
         success=True,
         message="Account deactivated successfully"
+    )
+
+
+@router.post("/delete-account", response_model=DeleteAccountResponse)
+async def delete_account(
+    request: DeleteAccountRequest,
+    response: Response,
+    session_token: Optional[str] = Cookie(None, alias="session_token"),
+    authorization: Optional[str] = Header(None),
+    db: Session = Depends(get_db)
+):
+    """
+    Permanently delete user account (hard delete)
+    
+    This will permanently delete the user account and all associated data:
+    - All sessions
+    - All workspaces and their contents (conversations, runs, assets, etc.)
+    
+    Requires additional verification:
+    - For email/password users: must provide password
+    - For Google OAuth users: must provide valid id_token
+    - Must type 'DELETE' in confirmation field to prevent accidental deletion
+    
+    WARNING: This action is irreversible!
+    """
+    # Verify confirmation text
+    if request.confirmation != "DELETE":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Confirmation text must be exactly 'DELETE'"
+        )
+    
+    # Get token from cookie or header
+    token = get_session_token(session_token, authorization)
+    
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+    
+    # Find the current session to get user (check expiration)
+    now = datetime.now(timezone.utc)
+    session = db.query(UserSession).filter(
+        UserSession.session_token == token,
+        UserSession.is_active == True,
+        UserSession.expires_at > now
+    ).first()
+    
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired session",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+    
+    user = db.query(User).filter(User.id == session.user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    # Verify based on auth_provider
+    if user.auth_provider == 'email':
+        # Email/password users must provide password
+        if not request.password:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Password required for email/password accounts"
+            )
+        
+        if not user.password_hash:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Password not set for this account"
+            )
+        
+        if not verify_password(request.password, user.password_hash):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid password"
+            )
+    
+    elif user.auth_provider == 'google':
+        # Google OAuth users must provide valid id_token
+        if not request.id_token:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Google ID token required for Google OAuth accounts"
+            )
+        
+        # Verify the token and ensure it matches the user
+        user_info = verify_google_token(request.id_token)
+        if not user_info:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid Google token"
+            )
+        
+        # Verify the token belongs to this user
+        if user_info['sub'] != user.google_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Token does not match this account"
+            )
+    
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unknown auth provider: {user.auth_provider}"
+        )
+    
+    # Permanently delete user (cascade will delete all related data)
+    # Note: Due to cascade relationships, this will also delete:
+    # - All sessions (UserSession)
+    # - All workspaces and their contents (Workspace, Conversation, Message, Run, etc.)
+    db.delete(user)
+    db.commit()
+    
+    # Clear the cookie
+    clear_session_cookie(response)
+    
+    return DeleteAccountResponse(
+        success=True,
+        message="Account permanently deleted"
+    )
+
+
+@router.post("/reactivate", response_model=ReactivateResponse)
+async def reactivate(
+    request: ReactivateRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Reactivate a deactivated user account
+    
+    Re-enables a user account that was previously deactivated (soft deleted).
+    User must provide authentication credentials to verify identity.
+    
+    Requires:
+    - Email or username to identify the account
+    - For email/password users: must provide password
+    - For Google OAuth users: must provide valid id_token
+    
+    Note: This endpoint can be called without authentication since the user
+    cannot login when their account is deactivated.
+    """
+    # Validate that at least one identifier is provided
+    if not request.username and not request.email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Either username or email must be provided"
+        )
+    
+    # Find user by username or email
+    if request.username:
+        user = db.query(User).filter(User.username == request.username).first()
+    else:
+        normalized_email = normalize_email(request.email)
+        user = db.query(User).filter(User.email == normalized_email).first()
+    
+    if not user:
+        # Don't reveal if account exists or not (security)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials"
+        )
+    
+    # Check if account is already active
+    if user.is_active:
+        return ReactivateResponse(
+            success=True,
+            message="Account is already active",
+            user=UserInfo(
+                id=user.id,
+                username=user.username,
+                email=user.email,
+                created_at=user.created_at
+            )
+        )
+    
+    # Verify based on auth_provider
+    if user.auth_provider == 'email':
+        # Email/password users must provide password
+        if not request.password:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Password required for email/password accounts"
+            )
+        
+        if not user.password_hash:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Password not set for this account"
+            )
+        
+        if not verify_password(request.password, user.password_hash):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid credentials"
+            )
+    
+    elif user.auth_provider == 'google':
+        # Google OAuth users must provide valid id_token
+        if not request.id_token:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Google ID token required for Google OAuth accounts"
+            )
+        
+        # Verify the token and ensure it matches the user
+        user_info = verify_google_token(request.id_token)
+        if not user_info:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid Google token"
+            )
+        
+        # Verify the token belongs to this user
+        if user_info['sub'] != user.google_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Token does not match this account"
+            )
+    
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unknown auth provider: {user.auth_provider}"
+        )
+    
+    # Reactivate the account
+    user.is_active = True
+    db.commit()
+    db.refresh(user)
+    
+    return ReactivateResponse(
+        success=True,
+        message="Account reactivated successfully",
+        user=UserInfo(
+            id=user.id,
+            username=user.username,
+            email=user.email,
+            created_at=user.created_at
+        )
     )
