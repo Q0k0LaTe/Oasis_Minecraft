@@ -27,7 +27,7 @@ class WorkspaceUpdate(BaseModel):
 class WorkspaceResponse(BaseModel):
     """Response schema for a single workspace"""
     id: UUID
-    owner_id: int
+    owner_id: UUID
     name: str
     description: Optional[str] = None
     cover_image_url: Optional[str] = None
