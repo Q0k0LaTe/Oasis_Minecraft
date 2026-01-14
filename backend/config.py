@@ -70,23 +70,80 @@ IMAGE_QUALITY = "standard"  # standard or hd
 IMAGE_VARIANT_COUNT = 5  # Number of texture variants to generate for user selection
 IMAGE_GENERATION_TIMEOUT = float(os.getenv("IMAGE_GENERATION_TIMEOUT", "180.0"))  # Longer timeout for image generation
 
+# =============================================================================
+# Environment Detection (used by multiple config sections)
+# =============================================================================
+IS_PRODUCTION = os.getenv("ENVIRONMENT", "development").lower() == "production"
+
 # Server Configuration
 HOST = "0.0.0.0"
-PORT = 3000
-CORS_ORIGINS = [
-    "http://localhost:8000",
-    "http://127.0.0.1:8000",
-    "http://localhost:8080",
-    "http://127.0.0.1:8080",
-    "*"  # Allow all origins during development
-]
+PORT = int(os.getenv("PORT", "3000"))
+
+# CORS Configuration
+# In production, set CORS_ALLOWED_ORIGINS environment variable with comma-separated trusted domains
+# Example: CORS_ALLOWED_ORIGINS=https://example.com,https://app.example.com
+_cors_env = os.getenv("CORS_ALLOWED_ORIGINS", "")
+if _cors_env:
+    # Production: use explicitly configured origins only
+    CORS_ORIGINS = [origin.strip() for origin in _cors_env.split(",") if origin.strip()]
+else:
+    # Development: allow common localhost origins (no wildcard!)
+    CORS_ORIGINS = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+        "http://localhost:8080",
+        "http://127.0.0.1:8080",
+        "http://localhost:5173",  # Vite default
+        "http://127.0.0.1:5173",
+    ]
+
+# Validate CORS configuration in production
+if IS_PRODUCTION and not _cors_env:
+    import warnings
+    warnings.warn(
+        "⚠️  CORS_ALLOWED_ORIGINS not set in production! "
+        "Using localhost defaults which may not work. "
+        "Set CORS_ALLOWED_ORIGINS environment variable.",
+        RuntimeWarning
+    )
 
 # Database Configuration
 DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_PORT = os.getenv("DB_PORT", "5432")
 DB_NAME = os.getenv("DB_NAME", "minecraft_mod_generator")
-DB_USER = os.getenv("DB_USER", "oasis")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "oasis123")
+
+# Database credentials: REQUIRED in production, optional defaults in development
+_db_user_env = os.getenv("DB_USER")
+_db_password_env = os.getenv("DB_PASSWORD")
+
+if IS_PRODUCTION:
+    # Production: credentials are mandatory, no defaults allowed
+    if not _db_user_env:
+        raise ValueError(
+            "DB_USER environment variable is required in production. "
+            "Set ENVIRONMENT=development to use defaults for local development."
+        )
+    if not _db_password_env:
+        raise ValueError(
+            "DB_PASSWORD environment variable is required in production. "
+            "Set ENVIRONMENT=development to use defaults for local development."
+        )
+    DB_USER = _db_user_env
+    DB_PASSWORD = _db_password_env
+else:
+    # Development: allow defaults for convenience (with warning if using defaults)
+    DB_USER = _db_user_env or "oasis"
+    DB_PASSWORD = _db_password_env or "oasis123"
+    if not _db_user_env or not _db_password_env:
+        import warnings
+        warnings.warn(
+            "⚠️  Using default database credentials (DB_USER/DB_PASSWORD). "
+            "This is only acceptable for local development. "
+            "Set these environment variables for production use.",
+            RuntimeWarning
+        )
 
 # Construct database URL for SQLAlchemy
 # Format: postgresql://user:password@host:port/database
@@ -143,7 +200,6 @@ SESSION_COOKIE_MAX_AGE = SESSION_EXPIRE_SECONDS  # Same as session expiry
 # Security settings - adjust for production
 # In development: Secure=False allows HTTP, SameSite=Lax for convenience
 # In production: Secure=True requires HTTPS, SameSite=Strict for max security
-IS_PRODUCTION = os.getenv("ENVIRONMENT", "development").lower() == "production"
 SESSION_COOKIE_SECURE = IS_PRODUCTION  # True in production (HTTPS only)
 SESSION_COOKIE_SAMESITE = "strict" if IS_PRODUCTION else "lax"  # CSRF protection
 SESSION_COOKIE_DOMAIN = os.getenv("SESSION_COOKIE_DOMAIN", None)  # None = same domain only

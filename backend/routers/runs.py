@@ -105,6 +105,111 @@ async def cancel_run(
     return RunResponse.model_validate(run)
 
 
+# ============================================================================
+# Delta Approval / Rejection
+# ============================================================================
+
+from pydantic import BaseModel
+from typing import List, Dict, Any
+
+class ApproveRequest(BaseModel):
+    """Request body for approving run deltas"""
+    modified_deltas: Optional[List[Dict[str, Any]]] = None
+    """Optional: modified deltas to apply instead of the pending ones"""
+
+class RejectRequest(BaseModel):
+    """Request body for rejecting run deltas"""
+    reason: Optional[str] = None
+    """Optional: reason for rejection"""
+
+
+@router.post("/{run_id}/approve")
+async def approve_run(
+    run_id: UUID,
+    request: Optional[ApproveRequest] = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Approve pending spec deltas and apply them to the workspace
+    
+    Called when user reviews the AI-generated changes and clicks 'Approve'.
+    Optionally accepts modified deltas if user edited them before approving.
+    
+    Only works for runs in 'awaiting_approval' status.
+    
+    Returns:
+        - success: bool
+        - spec_version: new version number
+        - status: new run status ('succeeded' or 'awaiting_input' if questions remain)
+        - spec_summary: summary of the updated spec
+    """
+    run = get_run_or_404(run_id, user, db)
+    
+    if run.status != "awaiting_approval":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Run is not awaiting approval (status: {run.status})"
+        )
+    
+    # Call the service function
+    from services.run_service import approve_run_deltas
+    
+    modified_deltas = request.modified_deltas if request else None
+    result = approve_run_deltas(str(run_id), modified_deltas)
+    
+    if not result.get("success"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=result.get("error", "Failed to approve deltas")
+        )
+    
+    return result
+
+
+@router.post("/{run_id}/reject")
+async def reject_run(
+    run_id: UUID,
+    request: Optional[RejectRequest] = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Reject pending spec deltas - discard them without applying
+    
+    Called when user reviews the AI-generated changes and clicks 'Reject'.
+    The run is marked as rejected and no changes are made to the workspace spec.
+    
+    Only works for runs in 'awaiting_approval' status.
+    
+    Returns:
+        - success: bool
+        - status: 'rejected'
+        - message: confirmation message
+    """
+    run = get_run_or_404(run_id, user, db)
+    
+    if run.status != "awaiting_approval":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Run is not awaiting approval (status: {run.status})"
+        )
+    
+    # Call the service function
+    from services.run_service import reject_run_deltas
+    
+    reason = request.reason if request else None
+    result = reject_run_deltas(str(run_id), reason)
+    
+    if not result.get("success"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=result.get("error", "Failed to reject deltas")
+        )
+    
+    return result
+
+
 @router.get("/{run_id}/events")
 async def stream_events(
     run_id: UUID,

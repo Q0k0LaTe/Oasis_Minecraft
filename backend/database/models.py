@@ -209,7 +209,7 @@ class Run(Base):
     # Run type: generate, build, regenerate_texture, etc.
     run_type = Column(String(50), nullable=False, default="generate")
     
-    # Status: queued, running, succeeded, failed, canceled
+    # Status: queued, running, awaiting_approval, awaiting_input, succeeded, failed, canceled, rejected
     status = Column(String(50), nullable=False, default="queued")
     progress = Column(Integer, default=0)  # 0-100 progress percentage
     

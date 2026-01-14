@@ -27,6 +27,8 @@ class EventType:
     # Run lifecycle
     RUN_STATUS = "run.status"  # Status change: queued/running/succeeded/failed/canceled
     RUN_PROGRESS = "run.progress"  # Progress update (0-100)
+    RUN_AWAITING_INPUT = "run.awaiting_input"  # Run paused, waiting for user response
+    RUN_AWAITING_APPROVAL = "run.awaiting_approval"  # Run paused, waiting for user to approve/reject deltas
     
     # Logging
     LOG_APPEND = "log.append"  # Log message
