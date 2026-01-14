@@ -7,6 +7,7 @@ import React from 'react';
 class App extends React.Component {
   render() {
     return (
+      //implement workspace constructor
       <div className="app">
         <Workspace />
      </div>
