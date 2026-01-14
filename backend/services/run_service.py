@@ -139,113 +139,84 @@ def execute_run(run_id: str):
         emit_event_sync(db, run.id, EventType.RUN_PROGRESS, {"progress": 30})
         
         # Preview the deltas (before applying)
+        deltas_data = []
         for i, delta in enumerate(orchestrator_response.deltas):
+            delta_dict = delta.model_dump(exclude_none=True)
+            deltas_data.append(delta_dict)
             emit_event_sync(db, run.id, EventType.SPEC_PREVIEW, {
                 "workspace_id": str(workspace.id),
                 "run_id": str(run.id),
                 "delta_index": i,
-                "delta": delta.model_dump(exclude_none=True)
+                "total_deltas": len(orchestrator_response.deltas),
+                "delta": delta_dict
             })
         
         # ====================================================================
-        # Phase 2: SpecManager - Apply deltas and persist to DB
+        # PAUSE: Wait for user approval before applying deltas
         # ====================================================================
         
         emit_event_sync(db, run.id, EventType.LOG_APPEND, {
-            "message": "Phase 2: Applying spec changes...",
-            "level": "info"
+            "message": f"⏸ Generated {len(deltas_data)} changes. Waiting for your approval...",
+            "level": "warning"
         })
         emit_event_sync(db, run.id, EventType.RUN_PROGRESS, {"progress": 40})
-        emit_event_sync(db, run.id, EventType.TASK_STARTED, {"task": "spec_manager"})
         
-        # Apply deltas and get new spec
-        new_spec, applied_deltas = _apply_deltas_to_workspace(
-            db=db,
-            workspace=workspace,
-            deltas=orchestrator_response.deltas,
-            run=run,
-            change_source="ai",
-            change_notes=f"Generated from: {user_prompt[:50]}..."
-        )
+        # Store pending deltas in run.result
+        run.status = "awaiting_approval"
+        run.result = {
+            "phase": "1",
+            "spec_version": workspace.spec_version,
+            "pending_deltas": deltas_data,
+            "requires_user_input": orchestrator_response.requires_user_input,
+            "clarifying_questions": orchestrator_response.clarifying_questions or [],
+            "reasoning": orchestrator_response.reasoning,
+            "user_prompt": user_prompt
+        }
+        db.commit()
         
-        emit_event_sync(db, run.id, EventType.TASK_FINISHED, {"task": "spec_manager"})
+        # Emit awaiting_approval event with all info frontend needs
+        emit_event_sync(db, run.id, EventType.RUN_STATUS, {
+            "status": "awaiting_approval",
+            "workspace_id": str(workspace.id),
+            "run_id": str(run.id)
+        })
         
-        # Emit spec.saved event with full details
-        emit_event_sync(db, run.id, EventType.SPEC_SAVED, {
+        emit_event_sync(db, run.id, EventType.RUN_AWAITING_APPROVAL, {
             "workspace_id": str(workspace.id),
             "run_id": str(run.id),
+            "pending_deltas": deltas_data,
+            "deltas_count": len(deltas_data),
+            "requires_user_input": orchestrator_response.requires_user_input,
+            "clarifying_questions": orchestrator_response.clarifying_questions or [],
+            "reasoning": orchestrator_response.reasoning,
             "spec_version": workspace.spec_version,
-            "spec": new_spec.model_dump() if new_spec else None,
-            "items_count": len(new_spec.items) if new_spec else 0,
-            "blocks_count": len(new_spec.blocks) if new_spec else 0,
-            "tools_count": len(new_spec.tools) if new_spec else 0
-        })
-        
-        emit_event_sync(db, run.id, EventType.LOG_APPEND, {
-            "message": f"✓ Spec saved (v{workspace.spec_version})",
-            "level": "info"
-        })
-        
-        if new_spec:
-            emit_event_sync(db, run.id, EventType.LOG_APPEND, {
-                "message": f"  - Mod: {new_spec.mod_name} | Items: {len(new_spec.items)}, Blocks: {len(new_spec.blocks)}, Tools: {len(new_spec.tools)}",
-                "level": "info"
-            })
-        
-        emit_event_sync(db, run.id, EventType.RUN_PROGRESS, {"progress": 70})
-        
-        # ====================================================================
-        # Check if user input is required (Phase 1-2 Loop)
-        # ====================================================================
-        
-        if orchestrator_response.requires_user_input:
-            # Pause the run - wait for user to respond to clarifying questions
-            run.status = "awaiting_input"
-            run.result = {
-                "phase": "1-2",
-                "spec_version": workspace.spec_version,
-                "requires_user_input": True,
-                "clarifying_questions": orchestrator_response.clarifying_questions,
-                "reasoning": orchestrator_response.reasoning
+            "current_spec_summary": {
+                "items_count": len(current_spec.items) if current_spec else 0,
+                "blocks_count": len(current_spec.blocks) if current_spec else 0,
+                "tools_count": len(current_spec.tools) if current_spec else 0,
             }
-            db.commit()
-            
-            emit_event_sync(db, run.id, EventType.RUN_STATUS, {
-                "status": "awaiting_input",
-                "workspace_id": str(workspace.id),
-                "run_id": str(run.id),
-                "clarifying_questions": orchestrator_response.clarifying_questions
-            })
-            
-            emit_event_sync(db, run.id, EventType.LOG_APPEND, {
-                "message": "⏸ Waiting for user input...",
-                "level": "warning"
-            })
-            
-            # Create assistant message asking for clarification
-            if run.conversation_id:
-                questions_text = "\n".join([f"• {q}" for q in orchestrator_response.clarifying_questions])
-                assistant_message = Message(
-                    conversation_id=run.conversation_id,
-                    role="assistant",
-                    content=f"I have a few questions to help me create a better mod:\n\n{questions_text}\n\nPlease respond with your preferences.",
-                    content_type="markdown",
-                    trigger_run_id=run.id
-                )
-                db.add(assistant_message)
-                db.commit()
-            
-            return  # Exit - user will send another message to continue
-        
-        # ====================================================================
-        # Phase 1-2 Complete - Ready for Build
-        # ====================================================================
-        
-        emit_event_sync(db, run.id, EventType.LOG_APPEND, {
-            "message": "✓ Generation complete. Click 'Build' to compile your mod to JAR.",
-            "level": "info"
         })
-        emit_event_sync(db, run.id, EventType.RUN_PROGRESS, {"progress": 100})
+        
+        # Create assistant message showing the preview
+        if run.conversation_id:
+            preview_text = _format_deltas_preview(deltas_data)
+            questions_text = ""
+            if orchestrator_response.clarifying_questions:
+                questions_text = "\n\n**I also have some questions:**\n" + "\n".join([f"• {q}" for q in orchestrator_response.clarifying_questions])
+            
+            assistant_message = Message(
+                conversation_id=run.conversation_id,
+                role="assistant",
+                content=f"I've analyzed your request and prepared the following changes:\n\n{preview_text}{questions_text}\n\n**Please review and click 'Approve' to apply these changes, or 'Reject' to discard them.**",
+                content_type="markdown",
+                trigger_run_id=run.id,
+                meta_data={"pending_approval": True, "deltas_count": len(deltas_data)}
+            )
+            db.add(assistant_message)
+            db.commit()
+        
+        # Exit - wait for user to approve/reject
+        return
         
         # Create assistant message with summary
         if run.conversation_id:
@@ -284,6 +255,304 @@ def execute_run(run_id: str):
         print(f"[RunService] Error executing run {run_id}: {e}")
         traceback.print_exc()
         _fail_run(db, run, str(e))
+    finally:
+        db.close()
+
+
+def approve_run_deltas(
+    run_id: str,
+    modified_deltas: Optional[List[Dict[str, Any]]] = None
+) -> Dict[str, Any]:
+    """
+    Approve pending deltas and apply them to the workspace spec (Phase 2)
+    
+    Called when user clicks 'Approve' on the preview.
+    Optionally accepts modified deltas if user edited them before approving.
+    
+    Args:
+        run_id: The run ID
+        modified_deltas: Optional list of modified deltas to use instead of pending ones
+        
+    Returns:
+        Dict with success status, new spec version, and spec summary
+    """
+    db = SessionLocal()
+    
+    try:
+        run_uuid = UUID(run_id)
+        run = db.query(Run).filter(Run.id == run_uuid).first()
+        
+        if not run:
+            return {"success": False, "error": "Run not found"}
+        
+        if run.status != "awaiting_approval":
+            return {"success": False, "error": f"Run is not awaiting approval (status: {run.status})"}
+        
+        workspace = db.query(Workspace).filter(Workspace.id == run.workspace_id).first()
+        if not workspace:
+            return {"success": False, "error": "Workspace not found"}
+        
+        # Get deltas to apply (modified ones or original pending ones)
+        pending_result = run.result or {}
+        deltas_data = modified_deltas if modified_deltas is not None else pending_result.get("pending_deltas", [])
+        
+        if not deltas_data:
+            return {"success": False, "error": "No deltas to apply"}
+        
+        user_prompt = pending_result.get("user_prompt", "User request")
+        
+        emit_event_sync(db, run.id, EventType.LOG_APPEND, {
+            "message": "✓ Changes approved. Applying to spec...",
+            "level": "info"
+        })
+        emit_event_sync(db, run.id, EventType.RUN_STATUS, {
+            "status": "running",
+            "workspace_id": str(workspace.id),
+            "run_id": str(run.id)
+        })
+        
+        run.status = "running"
+        db.commit()
+        
+        # ====================================================================
+        # Phase 2: Apply deltas and persist to DB
+        # ====================================================================
+        
+        emit_event_sync(db, run.id, EventType.LOG_APPEND, {
+            "message": "Phase 2: Applying spec changes...",
+            "level": "info"
+        })
+        emit_event_sync(db, run.id, EventType.RUN_PROGRESS, {"progress": 50})
+        emit_event_sync(db, run.id, EventType.TASK_STARTED, {"task": "spec_manager"})
+        
+        # Convert dicts back to SpecDelta objects
+        deltas = [SpecDelta(**d) for d in deltas_data]
+        
+        # Apply deltas and get new spec
+        new_spec, applied_deltas = _apply_deltas_to_workspace(
+            db=db,
+            workspace=workspace,
+            deltas=deltas,
+            run=run,
+            change_source="ai",
+            change_notes=f"Generated from: {user_prompt[:50]}..."
+        )
+        
+        emit_event_sync(db, run.id, EventType.TASK_FINISHED, {"task": "spec_manager"})
+        
+        # Emit spec.saved event with full details
+        emit_event_sync(db, run.id, EventType.SPEC_SAVED, {
+            "workspace_id": str(workspace.id),
+            "run_id": str(run.id),
+            "spec_version": workspace.spec_version,
+            "spec": new_spec.model_dump() if new_spec else None,
+            "items_count": len(new_spec.items) if new_spec else 0,
+            "blocks_count": len(new_spec.blocks) if new_spec else 0,
+            "tools_count": len(new_spec.tools) if new_spec else 0
+        })
+        
+        emit_event_sync(db, run.id, EventType.LOG_APPEND, {
+            "message": f"✓ Spec saved (v{workspace.spec_version})",
+            "level": "info"
+        })
+        
+        if new_spec:
+            emit_event_sync(db, run.id, EventType.LOG_APPEND, {
+                "message": f"  - Mod: {new_spec.mod_name} | Items: {len(new_spec.items)}, Blocks: {len(new_spec.blocks)}, Tools: {len(new_spec.tools)}",
+                "level": "info"
+            })
+        
+        emit_event_sync(db, run.id, EventType.RUN_PROGRESS, {"progress": 90})
+        
+        # ====================================================================
+        # Check if there are clarifying questions (continue Phase 1-2 loop)
+        # ====================================================================
+        
+        requires_input = pending_result.get("requires_user_input", False)
+        clarifying_questions = pending_result.get("clarifying_questions", [])
+        
+        if requires_input and clarifying_questions:
+            run.status = "awaiting_input"
+            run.result = {
+                "phase": "1-2",
+                "spec_version": workspace.spec_version,
+                "requires_user_input": True,
+                "clarifying_questions": clarifying_questions,
+                "reasoning": pending_result.get("reasoning", "")
+            }
+            db.commit()
+            
+            emit_event_sync(db, run.id, EventType.RUN_STATUS, {
+                "status": "awaiting_input",
+                "workspace_id": str(workspace.id),
+                "run_id": str(run.id)
+            })
+            
+            emit_event_sync(db, run.id, EventType.RUN_AWAITING_INPUT, {
+                "workspace_id": str(workspace.id),
+                "run_id": str(run.id),
+                "requires_user_input": True,
+                "clarifying_questions": clarifying_questions,
+                "spec_version": workspace.spec_version
+            })
+            
+            # Create assistant message asking for clarification
+            if run.conversation_id:
+                questions_text = "\n".join([f"• {q}" for q in clarifying_questions])
+                assistant_message = Message(
+                    conversation_id=run.conversation_id,
+                    role="assistant",
+                    content=f"Changes applied successfully! I have a few follow-up questions:\n\n{questions_text}\n\nPlease respond with your preferences.",
+                    content_type="markdown",
+                    trigger_run_id=run.id
+                )
+                db.add(assistant_message)
+                db.commit()
+            
+            return {
+                "success": True,
+                "spec_version": workspace.spec_version,
+                "status": "awaiting_input",
+                "clarifying_questions": clarifying_questions
+            }
+        
+        # ====================================================================
+        # Phase 1-2 Complete - Ready for Build
+        # ====================================================================
+        
+        emit_event_sync(db, run.id, EventType.LOG_APPEND, {
+            "message": "✓ Generation complete. Click 'Build' to compile your mod to JAR.",
+            "level": "info"
+        })
+        emit_event_sync(db, run.id, EventType.RUN_PROGRESS, {"progress": 100})
+        
+        # Create assistant message with summary
+        if run.conversation_id:
+            assistant_message = Message(
+                conversation_id=run.conversation_id,
+                role="assistant",
+                content=_generate_assistant_response(new_spec, applied_deltas),
+                content_type="markdown",
+                trigger_run_id=run.id
+            )
+            db.add(assistant_message)
+        
+        # Mark run as succeeded
+        run.status = "succeeded"
+        run.finished_at = datetime.utcnow()
+        run.progress = 100
+        run.result = {
+            "phase": "1-2",
+            "spec_version": workspace.spec_version,
+            "deltas_applied": len(applied_deltas),
+            "items_count": len(new_spec.items) if new_spec else 0,
+            "blocks_count": len(new_spec.blocks) if new_spec else 0,
+            "tools_count": len(new_spec.tools) if new_spec else 0
+        }
+        db.commit()
+        
+        emit_event_sync(db, run.id, EventType.RUN_STATUS, {
+            "status": "succeeded",
+            "workspace_id": str(workspace.id),
+            "run_id": str(run.id)
+        })
+        
+        return {
+            "success": True,
+            "spec_version": workspace.spec_version,
+            "status": "succeeded",
+            "spec_summary": {
+                "mod_name": new_spec.mod_name if new_spec else None,
+                "items_count": len(new_spec.items) if new_spec else 0,
+                "blocks_count": len(new_spec.blocks) if new_spec else 0,
+                "tools_count": len(new_spec.tools) if new_spec else 0
+            }
+        }
+        
+    except Exception as e:
+        print(f"[RunService] Error approving run {run_id}: {e}")
+        traceback.print_exc()
+        if run:
+            _fail_run(db, run, str(e))
+        return {"success": False, "error": str(e)}
+    finally:
+        db.close()
+
+
+def reject_run_deltas(run_id: str, reason: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Reject pending deltas - do not apply them to the workspace spec
+    
+    Called when user clicks 'Reject' on the preview.
+    The run is marked as cancelled and no changes are made to the spec.
+    
+    Args:
+        run_id: The run ID
+        reason: Optional reason for rejection
+        
+    Returns:
+        Dict with success status
+    """
+    db = SessionLocal()
+    
+    try:
+        run_uuid = UUID(run_id)
+        run = db.query(Run).filter(Run.id == run_uuid).first()
+        
+        if not run:
+            return {"success": False, "error": "Run not found"}
+        
+        if run.status != "awaiting_approval":
+            return {"success": False, "error": f"Run is not awaiting approval (status: {run.status})"}
+        
+        workspace = db.query(Workspace).filter(Workspace.id == run.workspace_id).first()
+        
+        emit_event_sync(db, run.id, EventType.LOG_APPEND, {
+            "message": f"✗ Changes rejected{': ' + reason if reason else ''}",
+            "level": "warning"
+        })
+        
+        # Mark run as rejected (using canceled status)
+        run.status = "rejected"
+        run.finished_at = datetime.utcnow()
+        run.error = reason or "User rejected changes"
+        run.result = {
+            "phase": "1",
+            "rejected": True,
+            "rejection_reason": reason,
+            "pending_deltas_discarded": len((run.result or {}).get("pending_deltas", []))
+        }
+        db.commit()
+        
+        emit_event_sync(db, run.id, EventType.RUN_STATUS, {
+            "status": "rejected",
+            "workspace_id": str(workspace.id) if workspace else None,
+            "run_id": str(run.id),
+            "reason": reason
+        })
+        
+        # Create assistant message acknowledging rejection
+        if run.conversation_id:
+            assistant_message = Message(
+                conversation_id=run.conversation_id,
+                role="assistant",
+                content=f"Changes discarded{': ' + reason if reason else ''}. No modifications were made to your mod spec. Feel free to send a new message with different instructions.",
+                content_type="text",
+                trigger_run_id=run.id
+            )
+            db.add(assistant_message)
+            db.commit()
+        
+        return {
+            "success": True,
+            "status": "rejected",
+            "message": "Changes rejected and discarded"
+        }
+        
+    except Exception as e:
+        print(f"[RunService] Error rejecting run {run_id}: {e}")
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
     finally:
         db.close()
 
@@ -726,10 +995,81 @@ def _estimate_build_progress(msg: str) -> Optional[int]:
     return None
 
 
+def _format_deltas_preview(deltas_data: List[Dict[str, Any]]) -> str:
+    """
+    Format deltas into a readable preview for the assistant message.
+    
+    Args:
+        deltas_data: List of delta dictionaries
+        
+    Returns:
+        Formatted markdown string showing the changes
+    """
+    if not deltas_data:
+        return "*No changes*"
+    
+    lines = []
+    
+    # Group deltas by operation type
+    adds = []
+    updates = []
+    removes = []
+    
+    for delta in deltas_data:
+        op = delta.get("operation", "add")
+        path = delta.get("path", "")
+        value = delta.get("value", {})
+        
+        # Try to get a human-readable name
+        name = (
+            value.get("item_name") or 
+            value.get("block_name") or 
+            value.get("tool_name") or 
+            value.get("mod_name") or
+            value.get("name") or
+            path
+        )
+        
+        # Determine type from path
+        item_type = "item"
+        if "blocks" in path:
+            item_type = "block"
+        elif "tools" in path:
+            item_type = "tool"
+        elif "mod_" in path or path == "":
+            item_type = "mod info"
+        elif "items" in path:
+            item_type = "item"
+        
+        if op == "add":
+            adds.append(f"+ **{name}** ({item_type})")
+        elif op == "update":
+            updates.append(f"~ **{name}** ({item_type})")
+        elif op == "remove":
+            removes.append(f"- **{name}** ({item_type})")
+    
+    if adds:
+        lines.append("**New:**")
+        lines.extend(adds)
+        lines.append("")
+    
+    if updates:
+        lines.append("**Updated:**")
+        lines.extend(updates)
+        lines.append("")
+    
+    if removes:
+        lines.append("**Removed:**")
+        lines.extend(removes)
+        lines.append("")
+    
+    return "\n".join(lines) if lines else "*No named changes*"
+
+
 def _generate_assistant_response(
     spec: Optional[ModSpec],
     applied_deltas: List[SpecDelta],
-    orchestrator_response: OrchestratorResponse
+    orchestrator_response: Optional[OrchestratorResponse] = None
 ) -> str:
     """
     Generate assistant response message summarizing what was created/changed.
