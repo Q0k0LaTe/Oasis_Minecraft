@@ -538,7 +538,7 @@ pytest tests/agents/test_pipeline.py -v
 
 ## 📄 License
 
-MIT License
+© 2026 <Team Name>. All rights reserved.
 
 ---
 
