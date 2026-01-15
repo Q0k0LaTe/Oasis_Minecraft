@@ -35,7 +35,7 @@ cd backend
 echo "GEMINI_API_KEY=your_gemini_api_key_here" > .env
 ```
 
-~~ 3. Run the startup script ~~
+~~3. Run the startup script~~
 ```bash
 ./START.sh
 ```
