@@ -1,5 +1,6 @@
 import React from 'react';
 import '../assets/css/style.css';
+import { API_BASE_URL } from '../config.js';
 
 const DATA = [{
     senderId: "system",

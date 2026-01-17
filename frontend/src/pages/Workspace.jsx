@@ -1,5 +1,6 @@
 import React from 'react';
 import ChatBox from '../ui_components/ChatBox.jsx';
+import { API_BASE_URL } from '../config.js';
 
 //specs are individual for each workspace
 export default class Workspace extends React.Component {
