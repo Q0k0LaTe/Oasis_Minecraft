@@ -180,20 +180,21 @@ RATE_LIMIT_RESOURCE_MAX = int(os.getenv("RATE_LIMIT_RESOURCE_MAX", "5"))
 RATE_LIMIT_RESOURCE_WINDOW = int(os.getenv("RATE_LIMIT_RESOURCE_WINDOW", "60"))
 
 # Paths to exclude from rate limiting (comma-separated)
-# Default: docs, health check, static files
+# Default: docs, health check only (NOT root path - that should be rate limited)
 RATE_LIMIT_EXCLUDE_PATHS = [
     p.strip() for p in os.getenv(
         "RATE_LIMIT_EXCLUDE_PATHS",
-        "/docs,/redoc,/openapi.json,/api/health,/"
+        "/docs,/redoc,/openapi.json,/api/health"
     ).split(",") if p.strip()
 ]
 
 # Whitelist IPs (comma-separated, supports CIDR notation)
-# Default: localhost only
+# Default: empty (no whitelist) - localhost is NOT whitelisted by default for security
+# Set this to whitelist trusted IPs like load balancers or internal services
 RATE_LIMIT_WHITELIST_IPS = [
     ip.strip() for ip in os.getenv(
         "RATE_LIMIT_WHITELIST_IPS",
-        "127.0.0.1,::1"
+        ""  # Empty by default - localhost will be rate limited
     ).split(",") if ip.strip()
 ]
 

@@ -400,7 +400,6 @@ The API includes built-in IP-based rate limiting to protect against abuse and DD
 These paths are not rate limited:
 - `/docs`, `/redoc`, `/openapi.json` (API documentation)
 - `/api/health` (health checks)
-- `/` (root endpoint)
 
 #### Response Headers
 
