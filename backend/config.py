@@ -149,11 +149,62 @@ else:
 # Format: postgresql://user:password@host:port/database
 DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
-# Redis Configuration (for verification codes)
+# Redis Configuration (for verification codes and rate limiting)
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 REDIS_DB = int(os.getenv("REDIS_DB", "0"))
 REDIS_URL = f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
+
+# =============================================================================
+# IP Rate Limiting Configuration
+# =============================================================================
+# Global rate limit: max requests per IP in a 10-second window
+RATE_LIMIT_GLOBAL_MAX = int(os.getenv("RATE_LIMIT_GLOBAL_MAX", "30"))
+RATE_LIMIT_GLOBAL_WINDOW = int(os.getenv("RATE_LIMIT_GLOBAL_WINDOW", "10"))
+
+# Burst rate limit: max requests per IP in a 1-second window
+RATE_LIMIT_BURST_MAX = int(os.getenv("RATE_LIMIT_BURST_MAX", "10"))
+RATE_LIMIT_BURST_WINDOW = int(os.getenv("RATE_LIMIT_BURST_WINDOW", "1"))
+
+# High-risk endpoint rate limits (stricter)
+# Auth endpoints: login, register, verification
+RATE_LIMIT_AUTH_MAX = int(os.getenv("RATE_LIMIT_AUTH_MAX", "10"))
+RATE_LIMIT_AUTH_WINDOW = int(os.getenv("RATE_LIMIT_AUTH_WINDOW", "60"))
+
+# Send verification code: very strict to prevent email abuse
+RATE_LIMIT_VERIFICATION_MAX = int(os.getenv("RATE_LIMIT_VERIFICATION_MAX", "3"))
+RATE_LIMIT_VERIFICATION_WINDOW = int(os.getenv("RATE_LIMIT_VERIFICATION_WINDOW", "60"))
+
+# Resource-intensive endpoints: build, AI generation
+RATE_LIMIT_RESOURCE_MAX = int(os.getenv("RATE_LIMIT_RESOURCE_MAX", "5"))
+RATE_LIMIT_RESOURCE_WINDOW = int(os.getenv("RATE_LIMIT_RESOURCE_WINDOW", "60"))
+
+# Paths to exclude from rate limiting (comma-separated)
+# Default: docs, health check only (NOT root path - that should be rate limited)
+RATE_LIMIT_EXCLUDE_PATHS = [
+    p.strip() for p in os.getenv(
+        "RATE_LIMIT_EXCLUDE_PATHS",
+        "/docs,/redoc,/openapi.json,/api/health"
+    ).split(",") if p.strip()
+]
+
+# Whitelist IPs (comma-separated, supports CIDR notation)
+# Default: empty (no whitelist) - localhost is NOT whitelisted by default for security
+# Set this to whitelist trusted IPs like load balancers or internal services
+RATE_LIMIT_WHITELIST_IPS = [
+    ip.strip() for ip in os.getenv(
+        "RATE_LIMIT_WHITELIST_IPS",
+        ""  # Empty by default - localhost will be rate limited
+    ).split(",") if ip.strip()
+]
+
+# Fail behavior when Redis is unavailable
+# Options: "closed" (deny, more secure), "open" (allow, more available)
+# Default: "closed" for production, "open" for development
+RATE_LIMIT_FAIL_MODE = os.getenv(
+    "RATE_LIMIT_FAIL_MODE",
+    "closed" if IS_PRODUCTION else "open"
+)
 
 # Email Configuration (Resend)
 RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
