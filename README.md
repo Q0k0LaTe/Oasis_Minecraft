@@ -35,10 +35,11 @@ cd backend
 echo "GEMINI_API_KEY=your_gemini_api_key_here" > .env
 ```
 
-3. **Run the startup script**
+~~3. Run the startup script~~
 ```bash
 ./START.sh
 ```
+
 
 That's it! The script will:
 - Create a virtual environment
@@ -439,7 +440,29 @@ sudo apt install openjdk-21-jdk gradle
 
 ## 🚀 Production Deployment
 
-### Docker
+### Docker Compose (Backend-focused)
+
+Use the provided `docker-compose.yml` to run the backend with Postgres + Redis:
+
+```bash
+# Create backend/.env from the template and fill in required keys
+cp backend/.env.example backend/.env
+
+# Start services
+docker compose up --build
+```
+
+Services and ports:
+- API: http://localhost:3000
+- Postgres: 5432
+- Redis: 6379
+
+Notes:
+- `backend/.env` must include `GEMINI_API_KEY`, `OPENAI_API_KEY`, and `RESEND_API_KEY`.
+- Generated files map to `backend/generated` and `backend/downloads` on the host.
+- TODO: Add Java 21 + Gradle to the backend Docker image for in-container mod compilation.
+
+### Docker (single container)
 
 ```dockerfile
 FROM python:3.11
@@ -538,7 +561,7 @@ pytest tests/agents/test_pipeline.py -v
 
 ## 📄 License
 
-MIT License
+© 2026 <Team Name>. All rights reserved.
 
 ---
 

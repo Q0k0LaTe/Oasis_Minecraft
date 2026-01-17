@@ -1,0 +1,43 @@
+services:
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: oasis_api
+    env_file:
+      - ./backend/.env
+    ports:
+      - "3000:3000"
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - ./backend/generated:/app/generated
+      - ./backend/downloads:/app/downloads
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: oasis_postgres
+    environment:
+      POSTGRES_DB: ${DB_NAME:-minecraft_mod_generator}
+      POSTGRES_USER: ${DB_USER:-oasis}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-oasis123}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: oasis_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:

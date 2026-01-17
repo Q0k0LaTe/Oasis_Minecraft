@@ -378,8 +378,103 @@ CMD ["python", "main.py"]
 - Validate all user inputs
 - Sanitize file paths
 - Limit file sizes
-- Rate limit API requests
+- Rate limit API requests (see below)
 - Scan generated code for malicious patterns
+
+### IP Rate Limiting
+
+The API includes built-in IP-based rate limiting to protect against abuse and DDoS attacks.
+
+#### Default Limits
+
+| Tier | Limit | Window | Description |
+|------|-------|--------|-------------|
+| **Global** | 30 requests | 10 seconds | Sustained rate for all endpoints |
+| **Burst** | 10 requests | 1 second | Prevents sudden spikes |
+| **Auth** | 10 requests | 60 seconds | Login, register, verification |
+| **Verification** | 3 requests | 60 seconds | Send verification code (email protection) |
+| **Resource** | 5 requests | 60 seconds | Build, AI generation (CPU-intensive) |
+
+#### Excluded Paths
+
+These paths are not rate limited:
+- `/docs`, `/redoc`, `/openapi.json` (API documentation)
+- `/api/health` (health checks)
+
+#### Response Headers
+
+All responses include rate limit headers:
+- `X-RateLimit-Limit`: Maximum requests allowed
+- `X-RateLimit-Remaining`: Requests remaining in window
+- `X-RateLimit-Reset`: Unix timestamp when window resets
+- `Retry-After`: Seconds to wait (only on 429 responses)
+
+#### 429 Response Format
+
+```json
+{
+  "detail": "Too many requests. Please slow down.",
+  "error": "rate_limit_exceeded",
+  "retry_after_seconds": 10,
+  "limit": 30,
+  "tier": "global"
+}
+```
+
+#### Environment Variables
+
+```bash
+# Global limits
+RATE_LIMIT_GLOBAL_MAX=30        # Max requests per window
+RATE_LIMIT_GLOBAL_WINDOW=10     # Window in seconds
+
+# Burst limits
+RATE_LIMIT_BURST_MAX=10         # Max requests per burst window
+RATE_LIMIT_BURST_WINDOW=1       # Burst window in seconds
+
+# Auth endpoint limits
+RATE_LIMIT_AUTH_MAX=10
+RATE_LIMIT_AUTH_WINDOW=60
+
+# Verification code limits (strict)
+RATE_LIMIT_VERIFICATION_MAX=3
+RATE_LIMIT_VERIFICATION_WINDOW=60
+
+# Resource-intensive endpoints
+RATE_LIMIT_RESOURCE_MAX=5
+RATE_LIMIT_RESOURCE_WINDOW=60
+
+# Excluded paths (comma-separated)
+RATE_LIMIT_EXCLUDE_PATHS=/docs,/redoc,/openapi.json,/api/health,/
+
+# Whitelist IPs (comma-separated, supports CIDR)
+RATE_LIMIT_WHITELIST_IPS=127.0.0.1,::1
+
+# Fail mode when Redis is unavailable: "closed" (deny) or "open" (allow)
+# Default: "closed" in production, "open" in development
+RATE_LIMIT_FAIL_MODE=closed
+```
+
+#### Testing Rate Limits
+
+```bash
+# Run the stress test script
+chmod +x tests/test_rate_limit_stress.sh
+./tests/test_rate_limit_stress.sh http://localhost:3000
+
+# Or manually with curl loop
+for i in {1..20}; do
+  curl -s -o /dev/null -w "%{http_code}\n" http://localhost:3000/
+done
+```
+
+#### Implementation Details
+
+- **Atomic operations**: Uses Redis Lua scripts to prevent race conditions
+- **Multi-tier**: Checks burst limit first, then global limit
+- **Path-specific**: High-risk endpoints have stricter limits
+- **Fail-safe**: Uses local in-memory fallback when Redis is unavailable
+- **Whitelist**: Configurable IP whitelist for trusted sources
 
 ## 📝 License
 
