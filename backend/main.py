@@ -14,12 +14,18 @@ API Structure:
 - /api/conversations/* - Conversation management
 - /api/runs/* - Run management + SSE events
 - /api/assets/* - Asset upload/management
+
+Security:
+- IP-based rate limiting (global + burst + path-specific)
+- CORS protection
+- Session-based authentication
 """
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import HOST, PORT, CORS_ORIGINS
 from routers import auth, workspaces, conversations, runs, assets, subscriptions
+from utils.ip_rate_limit_middleware import IPRateLimitMiddleware
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -28,7 +34,8 @@ app = FastAPI(
     version="2.0.0"
 )
 
-# Add CORS middleware
+# Add middlewares (order matters - first added = outermost = processed first)
+# 1. CORS middleware (outermost - handles CORS headers)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
@@ -36,6 +43,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 2. IP Rate Limiting middleware (after CORS, before routing)
+# This protects all endpoints with:
+# - Global limit: 30 requests per 10 seconds per IP
+# - Burst limit: 10 requests per 1 second per IP
+# - Path-specific limits for high-risk endpoints (auth, build, etc.)
+app.add_middleware(IPRateLimitMiddleware)
 
 # Include routers
 app.include_router(auth.router)
