@@ -1,49 +1,115 @@
-import Home from "./pages/Home";
-import Login from "./pages/Login";
-import Workspace from "./pages/Workspace";
+/**
+ * App - Main application component with routing
+ */
+
 import React from 'react';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { AuthProvider, useAuth } from './context/AuthContext.jsx';
 
-// Manage auth state so user logs in once, then goes to workspace
-class App extends React.Component {
-  constructor(props) {
-    super(props);
+// Pages
+import AuthPage from './pages/AuthPage.jsx';
+import WorkspaceListPage from './pages/WorkspaceListPage.jsx';
+import WorkspaceIDEPage from './pages/WorkspaceIDEPage.jsx';
 
-    let savedToken = null;
-    try {
-      savedToken = window.localStorage.getItem('authToken');
-    } catch {
-      savedToken = null;
-    }
+/**
+ * ProtectedRoute - Redirects to login if not authenticated
+ */
+function ProtectedRoute({ children }) {
+  const { isAuthenticated, isLoading } = useAuth();
+  const location = useLocation();
 
-    this.state = {
-      authToken: savedToken,
-      username: null,
-    };
-
-    this.handleLoginSuccess = this.handleLoginSuccess.bind(this);
-  }
-
-  handleLoginSuccess({ token, username }) {
-    this.setState({
-      authToken: token,
-      username,
-    });
-  }
-
-  render() {
-    const { authToken } = this.state;
-
+  if (isLoading) {
     return (
-      <div className="app">
-        {authToken ? (
-          // Pass auth token down so Workspace can create workspace and call APIs
-          <Workspace token={authToken} />
-        ) : (
-          <Login onLoginSuccess={this.handleLoginSuccess} />
-        )}
+      <div className="app-loading">
+        <div className="spinner"></div>
+        <p>Loading...</p>
       </div>
     );
   }
+
+  if (!isAuthenticated) {
+    // Redirect to login, saving the attempted location
+    return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+
+  return children;
+  }
+
+/**
+ * PublicRoute - Redirects to workspaces if already authenticated
+ */
+function PublicRoute({ children }) {
+  const { isAuthenticated, isLoading } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div className="app-loading">
+        <div className="spinner"></div>
+        <p>Loading...</p>
+      </div>
+    );
+  }
+
+  if (isAuthenticated) {
+    return <Navigate to="/workspaces" replace />;
+  }
+
+  return children;
 }
 
-export default App;
+/**
+ * AppRoutes - Route definitions
+ */
+function AppRoutes() {
+  return (
+    <Routes>
+      {/* Public routes */}
+      <Route
+        path="/login"
+        element={
+          <PublicRoute>
+            <AuthPage />
+          </PublicRoute>
+        }
+      />
+
+      {/* Protected routes */}
+      <Route
+        path="/workspaces"
+        element={
+          <ProtectedRoute>
+            <WorkspaceListPage />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/workspace/:workspaceId"
+        element={
+          <ProtectedRoute>
+            <WorkspaceIDEPage />
+          </ProtectedRoute>
+        }
+      />
+
+      {/* Default redirect */}
+      <Route path="/" element={<Navigate to="/workspaces" replace />} />
+      
+      {/* 404 - redirect to home */}
+      <Route path="*" element={<Navigate to="/workspaces" replace />} />
+    </Routes>
+  );
+}
+
+/**
+ * App - Root component
+ */
+export default function App() {
+  return (
+    <AuthProvider>
+      <div className="app">
+        <AppRoutes />
+      </div>
+    </AuthProvider>
+  );
+}

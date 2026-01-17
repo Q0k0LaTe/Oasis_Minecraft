@@ -8,6 +8,7 @@ Provides:
 """
 import asyncio
 import json
+import threading
 from datetime import datetime
 from typing import Dict, Any, Optional, AsyncGenerator, List
 from uuid import UUID
@@ -20,6 +21,15 @@ from database import RunEvent, Run, Workspace
 # In-memory subscribers for real-time event delivery
 # In production, consider using Redis pub/sub for multi-instance support
 _subscribers: Dict[str, List[asyncio.Queue]] = defaultdict(list)
+_subscribers_lock = threading.Lock()
+
+# Store the main event loop for thread-safe event dispatch
+_main_loop: Optional[asyncio.AbstractEventLoop] = None
+
+def set_main_loop(loop: asyncio.AbstractEventLoop):
+    """Set the main event loop for thread-safe event dispatch"""
+    global _main_loop
+    _main_loop = loop
 
 
 class EventType:
@@ -127,21 +137,44 @@ def emit_event_sync(
 
 
 def _notify_subscribers(run_id: str, event: RunEvent):
-    """Notify all subscribers for a run about a new event"""
-    if run_id in _subscribers:
-        event_data = {
+    """
+    Notify all subscribers for a run about a new event.
+    Thread-safe: can be called from background threads.
+    """
+    event_data = {
             "id": str(event.id),
             "run_id": str(event.run_id),
             "event_type": event.event_type,
             "payload": event.payload,
             "created_at": event.created_at.isoformat() if event.created_at else None
-        }
-        for queue in _subscribers[run_id]:
-            try:
+    }
+    
+    with _subscribers_lock:
+        if run_id not in _subscribers:
+            return
+        queues = list(_subscribers[run_id])  # Copy to avoid holding lock during put
+    
+    for queue in queues:
+        try:
+            # Try to use the event loop's thread-safe method if available
+            if _main_loop and _main_loop.is_running():
+                _main_loop.call_soon_threadsafe(
+                    lambda q=queue, d=event_data: _safe_put(q, d)
+                )
+            else:
+                # Fallback to direct put (works if called from event loop thread)
                 queue.put_nowait(event_data)
-            except asyncio.QueueFull:
-                # Skip if queue is full (subscriber is slow)
-                pass
+        except Exception as e:
+            # Log but don't fail - subscriber might have disconnected
+            print(f"[EventService] Warning: Failed to notify subscriber: {e}")
+
+
+def _safe_put(queue: asyncio.Queue, data: dict):
+    """Safely put data into queue, ignore if full"""
+    try:
+        queue.put_nowait(data)
+    except asyncio.QueueFull:
+        pass
 
 
 async def subscribe(run_id: str) -> AsyncGenerator[str, None]:
@@ -158,10 +191,23 @@ async def subscribe(run_id: str) -> AsyncGenerator[str, None]:
                 media_type="text/event-stream"
             )
     """
+    # Set the main event loop for thread-safe event dispatch
+    global _main_loop
+    try:
+        _main_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        pass
+    
     queue: asyncio.Queue = asyncio.Queue(maxsize=100)
-    _subscribers[run_id].append(queue)
+    
+    # Thread-safe add subscriber
+    with _subscribers_lock:
+        _subscribers[run_id].append(queue)
     
     try:
+        # Send initial connection event
+        yield f": connected to run {run_id}\n\n"
+        
         while True:
             try:
                 # Wait for new event with timeout
@@ -169,14 +215,20 @@ async def subscribe(run_id: str) -> AsyncGenerator[str, None]:
                 yield f"event: {event_data['event_type']}\n"
                 yield f"data: {json.dumps(event_data)}\n\n"
             except asyncio.TimeoutError:
-                # Send keepalive comment
+                # Send keepalive comment to keep connection alive
                 yield ": keepalive\n\n"
     except asyncio.CancelledError:
         pass
+    except GeneratorExit:
+        pass
     finally:
-        # Cleanup subscriber
-        if run_id in _subscribers:
-            _subscribers[run_id].remove(queue)
+        # Thread-safe cleanup subscriber
+        with _subscribers_lock:
+            if run_id in _subscribers:
+                try:
+                    _subscribers[run_id].remove(queue)
+                except ValueError:
+                    pass
             if not _subscribers[run_id]:
                 del _subscribers[run_id]
 

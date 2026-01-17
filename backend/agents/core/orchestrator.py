@@ -201,10 +201,15 @@ class Orchestrator:
         """
         Handle modifications to existing spec
         """
+        import logging
+        logger = logging.getLogger(__name__)
+        
         # Determine what user wants to change
         intent = self._parse_modification_intent(user_prompt, current_spec)
+        logger.info(f"[Orchestrator] Parsed intent: {intent}")
 
         deltas = []
+        clarifying_questions = []
 
         # Examples of modifications:
         # "make it rarer" -> update rarity
@@ -213,30 +218,71 @@ class Orchestrator:
 
         operation = intent.get("operation")
         target = intent.get("target")
+        
+        logger.info(f"[Orchestrator] Operation: {operation}, Target: {target}")
 
         if operation == "modify_property":
             path = intent.get("path")
             value = intent.get("value")
-            deltas.append(SpecDelta(
-                operation="update",
-                path=path,
-                value=value,
-                reason=self._format_reason(user_prompt)
-            ))
+            if path and value is not None:
+                deltas.append(SpecDelta(
+                    operation="update",
+                    path=path,
+                    value=value,
+                    reason=self._format_reason(user_prompt)
+                ))
+            else:
+                logger.warning(f"[Orchestrator] Invalid modify_property: path={path}, value={value}")
+                
         elif operation == "add_item":
-            new_item = self._create_item_spec(intent)
+            # BUG FIX: Use new_item_data, not intent directly
+            new_item_data = intent.get("new_item_data", {})
+            logger.info(f"[Orchestrator] Adding item with data: {new_item_data}")
+            new_item = self._create_item_spec(new_item_data)
             deltas.append(SpecDelta(
                 operation="add",
                 path=f"items[{len(current_spec.items)}]",
                 value=new_item.dict(),
                 reason=self._format_reason(user_prompt)
             ))
+            
+        elif operation == "add_block":
+            new_block_data = intent.get("new_item_data", {})
+            logger.info(f"[Orchestrator] Adding block with data: {new_block_data}")
+            new_block = self._create_block_spec(new_block_data)
+            deltas.append(SpecDelta(
+                operation="add",
+                path=f"blocks[{len(current_spec.blocks)}]",
+                value=new_block.dict(),
+                reason=self._format_reason(user_prompt)
+            ))
+            
+        elif operation == "add_tool":
+            new_tool_data = intent.get("new_item_data", {})
+            logger.info(f"[Orchestrator] Adding tool with data: {new_tool_data}")
+            new_tool = self._create_tool_spec(new_tool_data)
+            deltas.append(SpecDelta(
+                operation="add",
+                path=f"tools[{len(current_spec.tools)}]",
+                value=new_tool.dict(),
+                reason=self._format_reason(user_prompt)
+            ))
+            
+        elif operation == "unknown":
+            logger.warning(f"[Orchestrator] Unknown operation for prompt: {user_prompt}")
+            clarifying_questions.append(
+                "I'm not sure what you'd like me to do. Could you be more specific? "
+                "For example: 'add a ruby sword' or 'make the first item rarer'"
+            )
+        
+        reasoning = f"Applied modification: {operation}" if deltas else f"Could not apply: {operation}"
+        logger.info(f"[Orchestrator] Generated {len(deltas)} deltas, {len(clarifying_questions)} questions")
 
         return OrchestratorResponse(
             deltas=deltas,
-            clarifying_questions=[],
-            reasoning=f"Applied modification: {operation}",
-            requires_user_input=False
+            clarifying_questions=clarifying_questions,
+            reasoning=reasoning,
+            requires_user_input=len(clarifying_questions) > 0
         )
 
     def _parse_item_intent(self, prompt: str) -> Dict[str, Any]:
@@ -298,6 +344,9 @@ return ALL of them in the items list. Be generous in interpretation. If unclear,
         Returns:
             Dictionary with operation details
         """
+        import logging
+        logger = logging.getLogger(__name__)
+        
         parser = PydanticOutputParser(pydantic_object=ModificationIntentParse)
 
         # Build context about current spec
@@ -307,6 +356,9 @@ return ALL of them in the items list. Be generous in interpretation. If unclear,
 - Blocks: {len(current_spec.blocks)} blocks ({', '.join([block.block_name for block in current_spec.blocks[:3]])}{"..." if len(current_spec.blocks) > 3 else ""})
 - Tools: {len(current_spec.tools)} tools ({', '.join([tool.tool_name for tool in current_spec.tools[:3]])}{"..." if len(current_spec.tools) > 3 else ""})"""
 
+        logger.info(f"[Orchestrator] _parse_modification_intent called with prompt: {prompt}")
+        logger.info(f"[Orchestrator] Spec context: {spec_context}")
+
         prompt_template = ChatPromptTemplate.from_messages([
             ("system", """You are a Minecraft mod modification assistant. Parse the user's modification request and determine:
 - What operation they want (modify_property, add_item, add_block, add_tool, remove_item, remove_block, remove_tool)
@@ -315,12 +367,19 @@ return ALL of them in the items list. Be generous in interpretation. If unclear,
 - What value to set (if modifying)
 - What to add (if adding new item/block/tool)
 
+For ADD operations, you MUST fill in the new_item field with:
+- type: "item", "block", or "tool"
+- name: A descriptive name based on the user's request
+- description: What the item does or is
+- rarity: COMMON, UNCOMMON, RARE, or EPIC
+- creative_tab: Appropriate tab
+- special_ability: Any mentioned abilities
+- texture_description: How it should look
+
 Examples:
+- "add a ruby that grows in dark" -> operation=add_item, new_item={{type="item", name="Dark Ruby", description="A magical ruby that grows in darkness", rarity="RARE", special_ability="Grows in dark environments"}}
 - "make it rarer" -> modify rarity property of most recent item
-- "change the first item's color to blue" -> modify texture/description
-- "add a pickaxe" -> add new tool
-- "remove the diamond block" -> remove specific block
-- "make the ruby block glow" -> modify luminance property
+- "add a pickaxe" -> add new tool with appropriate properties
 
 {format_instructions}"""),
             ("user", "Context:\n{spec_context}\n\nUser request: {prompt}")
@@ -335,6 +394,7 @@ Examples:
                 "format_instructions": parser.get_format_instructions()
             })
             parsed = result.dict()
+            logger.info(f"[Orchestrator] LLM parsed result: {parsed}")
 
             # Convert parsed result to the format expected by _handle_iterative_prompt
             intent = {"operation": parsed["operation"]}
@@ -350,13 +410,18 @@ Examples:
                 intent["target"] = parsed.get("target")
 
             elif parsed["operation"] in ["add_item", "add_block", "add_tool"]:
-                intent["new_item_data"] = parsed.get("new_item", {})
+                new_item = parsed.get("new_item")
+                logger.info(f"[Orchestrator] new_item from LLM: {new_item}")
+                # Ensure we have a dict, handle both dict and None
+                intent["new_item_data"] = new_item if new_item else {}
+                logger.info(f"[Orchestrator] new_item_data: {intent['new_item_data']}")
 
+            logger.info(f"[Orchestrator] Final intent: {intent}")
             return intent
 
         except Exception as e:
             # Fallback to simple heuristics
-            print(f"Warning: LLM modification parsing failed, using fallback. Error: {e}")
+            logger.error(f"[Orchestrator] LLM modification parsing failed: {e}", exc_info=True)
             prompt_lower = prompt.lower()
 
             if "rare" in prompt_lower or "epic" in prompt_lower:
