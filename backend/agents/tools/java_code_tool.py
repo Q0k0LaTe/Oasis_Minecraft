@@ -118,7 +118,7 @@ def _generate_mod_items_class(
 
         item_declarations.append(f'\tpublic static Item {registration_id};')
 
-        settings = f"new Item.Settings().maxCount({max_stack})"
+        settings = f"new Item.Settings().registryKey(RegistryKey.of(RegistryKeys.ITEM, Identifier.of({main_class_name}.MOD_ID, \"{item_id}\"))).maxCount({max_stack})"
         if fireproof:
             settings += ".fireproof()"
 
@@ -135,6 +135,8 @@ def _generate_mod_items_class(
         import net.minecraft.item.Item;
         import net.minecraft.registry.Registries;
         import net.minecraft.registry.Registry;
+        import net.minecraft.registry.RegistryKey;
+        import net.minecraft.registry.RegistryKeys;
         import net.minecraft.util.Identifier;
         import {package_name}.{main_class_name};
 
@@ -175,7 +177,7 @@ def _generate_mod_blocks_class(
 
         block_declarations.append(f'\tpublic static Block {registration_id};')
 
-        settings = f"Block.Settings.create().strength({hardness}f, {resistance}f)"
+        settings = f"Block.Settings.create().registryKey(RegistryKey.of(RegistryKeys.BLOCK, Identifier.of({main_class_name}.MOD_ID, \"{block_id}\"))).strength({hardness}f, {resistance}f)"
         if requires_tool:
             settings += ".requiresTool()"
 
@@ -187,7 +189,7 @@ def _generate_mod_blocks_class(
 
         block_item_registrations.append(
             f'\t\tRegistry.register(Registries.ITEM, Identifier.of({main_class_name}.MOD_ID, "{block_id}"), '
-            f'new BlockItem({registration_id}, new Item.Settings()));'
+            f'new BlockItem({registration_id}, new Item.Settings().registryKey(RegistryKey.of(RegistryKeys.ITEM, Identifier.of({main_class_name}.MOD_ID, \"{block_id}\"))).useBlockPrefixedTranslationKey()));'
         )
 
     # Generate class
@@ -199,6 +201,8 @@ def _generate_mod_blocks_class(
         import net.minecraft.item.Item;
         import net.minecraft.registry.Registries;
         import net.minecraft.registry.Registry;
+        import net.minecraft.registry.RegistryKey;
+        import net.minecraft.registry.RegistryKeys;
         import net.minecraft.util.Identifier;
         import {package_name}.{main_class_name};
 
