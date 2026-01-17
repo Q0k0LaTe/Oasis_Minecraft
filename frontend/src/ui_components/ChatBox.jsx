@@ -11,12 +11,19 @@ class ChatBox extends React.Component {
   constructor() {
     super()
     this.state = {
-       messages: DATA
+       messages: DATA,
+       isLoading: false, // Track if a request is in progress
+       conversationId: null // Store the conversation ID
     }
     this.userSendMessage = this.userSendMessage.bind(this);
-    this.postConversation = this.postConversation.bind(this);
+    this.getConversation = this.getConversation.bind(this);
+    this.createConversation = this.createConversation.bind(this);
     //this.getAIResponse = this.getAIResponse.bind(this);
-    this.workspaceId = this.props.workspaceId;
+  }
+
+  async componentDidMount() {
+    // Create conversation when ChatBox mounts
+    await this.createConversation();
   }
   
   render() {
@@ -24,12 +31,20 @@ class ChatBox extends React.Component {
       <div className="chatbox">
         <Title />
         <MessageList messages={this.state.messages} />
-        <SendMessageForm sendMessage = {this.userSendMessage} />
+        <SendMessageForm 
+          sendMessage={this.userSendMessage} 
+          disabled={this.state.isLoading}
+        />
      </div>
     )
   }
 
   userSendMessage(text) {
+    // Prevent sending if already loading
+    if (this.state.isLoading) {
+      return;
+    }
+
     //just add the data chain for now
     DATA.push({
       senderId: "User",
@@ -39,22 +54,64 @@ class ChatBox extends React.Component {
        messages: DATA
     });
 
-    this.postConversation(this.workspaceId);
+    // Use the stored conversationId instead of workspaceId
+    if (this.state.conversationId) {
+      this.getConversation(this.state.conversationId);
+    } else {
+      console.error('Conversation ID not available');
+    }
   };
+
+  // Create a conversation for this workspace
+  async createConversation() {
+    try {
+      const workspaceId = this.props.workspaceId;
+      if (!workspaceId) {
+        throw new Error('workspaceId is required to create conversation');
+      }
+
+      const endpoint = `${API_BASE_URL}/workspaces/${workspaceId}/conversations`;
+
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to create conversation: ${response.status}`);
+      }
+
+      const data = await response.json();
+      // Save returned conversation id
+      const conversationId = data.id || data.conversation_id;
+      this.setState({ conversationId });
+      
+      return conversationId;
+    } catch (error) {
+      console.error('Error creating conversation:', error);
+      this.setState({ conversationId: null });
+      throw error;
+    }
+  }
 
   //add accept or refuse changes later
   //ai automatically generates/updates spec, idk if it returns anything actually, but it does what it does
   // post message to call backend to get conversation: returns array of messages and its size
-  async postConversation(conversationId) {
+  async getConversation(conversationId) {
+    // Set loading state to prevent sending another message
+    this.setState({ isLoading: true });
+
     try {
       if (!conversationId) {
         throw new Error('conversationId is required to fetch conversation');
       }
 
-      const endpoint = `http://localhost:3000/api/conversations/${conversationId}/messages`;
+      const endpoint = `${API_BASE_URL}/conversations/${conversationId}`;
 
       const response = await fetch(endpoint, {
-        method: 'POST',
+        method: 'GET',
         headers: {
           'Content-Type': 'application/json',
         },
@@ -68,9 +125,13 @@ class ChatBox extends React.Component {
       const messages = await response.json();
       const size = Array.isArray(messages) ? messages.length : 0;
 
+      // Request completed successfully - re-enable sending
+      this.setState({ isLoading: false });
       return { messages, size };
     } catch (error) {
       console.error('Error fetching AI conversation:', error);
+      // Request failed - re-enable sending
+      this.setState({ isLoading: false });
       throw error;
     }
   }
@@ -132,7 +193,9 @@ class SendMessageForm extends React.Component {
           onChange={this.handleChange}
           value={this.state.message}
           placeholder="Enter your prompt, press ENTER to send, Ctrl+ENTER for new line:"
-          type="text" />
+          type="text"
+          disabled={this.props.disabled}
+        />
       </form>
     )
   }
@@ -145,6 +208,10 @@ class SendMessageForm extends React.Component {
 
   handleSubmit(e) {
     e.preventDefault();
+    // Prevent submission if disabled
+    if (this.props.disabled) {
+      return;
+    }
     this.props.sendMessage(this.state.message);
     this.setState({
       message: ''

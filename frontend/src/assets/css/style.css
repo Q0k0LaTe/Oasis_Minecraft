@@ -113,6 +113,13 @@ body {
   box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2);
 }
 
+.send-message-form input[type="text"]:disabled {
+  background: #f3f4f6;
+  color: #9ca3af;
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
 .login-container {
   display: flex;
   flex-direction: column;
@@ -121,6 +128,37 @@ body {
   min-height: 100vh;
   padding: 2rem;
   background-color: #fefcf9;
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  width: 100%;
+  max-width: 320px;
+  margin-top: 1.5rem;
+}
+
+.login-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.9rem;
+  color: #4b5563;
+}
+
+.login-input {
+  border-radius: 8px;
+  border: 1px solid #d4d4d8;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.95rem;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.login-input:focus {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.16);
 }
 
 .login-headline {
@@ -138,6 +176,11 @@ body {
   gap: 0.75rem;
   width: 100%;
   max-width: 320px;
+}
+
+.login-submit {
+  margin-top: 0.5rem;
+  width: 100%;
 }
 
 .login-button {

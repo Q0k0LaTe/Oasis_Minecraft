@@ -6,12 +6,12 @@ export default class Workspace extends React.Component {
   constructor(props) {
     super(props);
 
-    // Cache workspace id (renamed from sessionContext)
-    this.workspaceId = null;
-
     this.getSpecInfo = this.getSpecInfo.bind(this);
-    this.createWorkspace = this.createWorkspace.bind(this);
+    //cache workspace id (renamed from sessionContext)
+    this.workspaceId = this.createWorkspace = this.createWorkspace.bind(this);
     this.createWorkspace();
+    //creates conversation (chat) on workspace creation, cache conversation id
+    this.conversationId = this.createConversation();
   }
 
   /*
@@ -27,7 +27,7 @@ export default class Workspace extends React.Component {
 
   // Create workspace in the backend and cache the returned id as workspaceId
   // Equivalent to:
-  // curl -X POST "http://localhost:3000/api/workspaces" \
+  // curl -X POST "${API_BASE_URL}/workspaces" \
   //   -H "Content-Type: application/json" \
   //   -H "Authorization: Bearer $TOKEN" \
   //   -d '{"name": "My Ruby Mod"}'
@@ -35,7 +35,7 @@ export default class Workspace extends React.Component {
     try {
       const token = this.props.token; // Expect auth token via props (if needed)
 
-      const response = await fetch('http://localhost:3000/api/workspaces', {
+      const response = await fetch(`${API_BASE_URL}/workspaces`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -60,6 +60,35 @@ export default class Workspace extends React.Component {
     }
   }
 
+  async createConversation() {
+    try {
+      const workspaceId = this.workspaceId;
+      if (!workspaceId) {
+        throw new Error('workspaceId is not set');
+      }
+
+      const response = await fetch(`${API_BASE_URL}/workspaces/${workspaceId}/conversations`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: 'My Conversation',
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to create conversation: ${response.status}`);
+      }
+
+      const data = await response.json();
+      // Save returned conversation id
+      this.conversationId = data.id || data.conversation_id;
+    } catch (error) {
+      console.error('Error creating conversation:', error);
+    }
+  }
+
   // Get spec info from the backend for this workspace
   async getSpecInfo() {
     try {
@@ -68,7 +97,7 @@ export default class Workspace extends React.Component {
         throw new Error('workspaceId is not set');
       }
 
-      const endpoint = `http://localhost:3000/api/workspaces/${workspaceId}/spec`;
+      const endpoint = `${API_BASE_URL}/workspaces/${workspaceId}/spec`;
 
       const response = await fetch(endpoint, {
         method: 'GET',

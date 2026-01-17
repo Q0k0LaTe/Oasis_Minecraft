@@ -1,15 +1,16 @@
-fastapi==0.104.1
+fastapi==0.110.3
 uvicorn[standard]==0.24.0
 python-dotenv==1.0.0
-pydantic==2.5.0
+pydantic==2.12.5
 openai==1.58.1
 tiktoken==0.7.0
-protobuf>=3.19.5,<5.0.0
-httpx==0.27.2
+protobuf==4.25.8
+httpx==0.28.1
 Pillow==10.1.0
 requests==2.31.0
 Jinja2==3.1.2
 aiofiles==23.2.1
+python-multipart==0.0.21
 langchain==0.2.17
 langchain-community==0.2.17
 langchain-openai==0.1.20
@@ -30,5 +31,5 @@ email-validator==2.1.0
 # fastapi-mail==1.4.1  # depreciated, replaced by Resend
 
 # Google OAuth dependencies
-google-auth==2.27.0
+google-auth==2.47.0
 google-auth-oauthlib==1.2.0

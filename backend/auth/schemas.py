@@ -5,6 +5,7 @@ Request and response models for authentication endpoints
 from pydantic import BaseModel, EmailStr, Field
 from typing import Optional
 from datetime import datetime
+from uuid import UUID
 
 
 class RegisterRequest(BaseModel):
@@ -72,7 +73,7 @@ class LoginResponse(BaseModel):
 
 class UserInfo(BaseModel):
     """User information in responses"""
-    id: int
+    id: UUID
     username: str
     email: str
     created_at: datetime
@@ -148,9 +149,44 @@ class DeactivateResponse(BaseModel):
     message: str
 
 
+class DeleteAccountRequest(BaseModel):
+    """Delete account request (permanent deletion)"""
+    # For email/password users: require password
+    password: Optional[str] = Field(None, description="Password (required for email/password users)")
+    # For Google OAuth users: require id_token
+    id_token: Optional[str] = Field(None, description="Google ID Token (required for Google OAuth users)")
+    # Confirmation text to prevent accidental deletion
+    confirmation: str = Field(..., description="Type 'DELETE' to confirm permanent account deletion")
+
+
+class DeleteAccountResponse(BaseModel):
+    """Delete account response"""
+    success: bool
+    message: str
+
+
+class ReactivateRequest(BaseModel):
+    """Reactivate account request"""
+    # User identifier (email or username)
+    email: Optional[EmailStr] = Field(None, description="Email address of the account to reactivate")
+    username: Optional[str] = Field(None, description="Username of the account to reactivate")
+    # For email/password users: require password
+    password: Optional[str] = Field(None, description="Password (required for email/password users)")
+    # For Google OAuth users: require id_token
+    id_token: Optional[str] = Field(None, description="Google ID Token (required for Google OAuth users)")
+
+
+class ReactivateResponse(BaseModel):
+    """Reactivate account response"""
+    success: bool
+    message: str
+    user: Optional['UserInfo'] = None
+
+
 # Update forward references
 RegisterResponse.model_rebuild()
 LoginResponse.model_rebuild()
 GoogleLoginResponse.model_rebuild()
 SetUsernameResponse.model_rebuild()
+ReactivateResponse.model_rebuild()
 

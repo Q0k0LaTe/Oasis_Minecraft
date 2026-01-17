@@ -317,8 +317,8 @@ def main():
     
     parser.add_argument(
         '--output', '-o',
-        default='docs',
-        help='输出目录 (默认: docs)'
+        default='backend_docs',
+        help='输出目录 (默认: backend_docs)'
     )
     
     parser.add_argument(

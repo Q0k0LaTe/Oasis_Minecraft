@@ -18,6 +18,8 @@ from .run_service import (
     execute_run,
     execute_build,
     apply_spec_delta_from_api,
+    approve_run_deltas,
+    reject_run_deltas,
 )
 
 __all__ = [
@@ -37,4 +39,6 @@ __all__ = [
     "execute_run",
     "execute_build",
     "apply_spec_delta_from_api",
+    "approve_run_deltas",
+    "reject_run_deltas",
 ]
