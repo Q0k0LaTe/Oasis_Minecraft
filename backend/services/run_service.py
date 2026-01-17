@@ -10,8 +10,23 @@ Architecture:
 - Phase 1-2 are INTERACTIVE: Orchestrator generates deltas, SpecManager applies them
 - Phase 1-2 can loop (human-in-the-loop) until user triggers Build
 - Phase 3+ (Build) runs the full pipeline: Compiler → Planner → Executor → Validator → Builder
+
+WORKFLOW STATE MACHINE:
+=======================
+[queued] → execute_run() → [running] → Orchestrator → [awaiting_approval]
+                                                              ↓
+                                                    User calls approve → [running] → SpecManager → [succeeded]
+                                                              ↓
+                                                    User calls reject  → [rejected]
+
+KEY STATES:
+- awaiting_approval: Run is paused waiting for user to review AI-generated deltas
+  * Enter condition: Orchestrator returns deltas (even 0 deltas)
+  * Continue via: POST /api/runs/{run_id}/approve
+  * Cancel via: POST /api/runs/{run_id}/reject
 """
 import traceback
+import logging
 from datetime import datetime
 from pathlib import Path
 from uuid import UUID
@@ -31,6 +46,10 @@ from agents.core.orchestrator import Orchestrator, OrchestratorResponse, Convers
 from agents.core.spec_manager import SpecManager
 from agents.schemas import ModSpec, SpecDelta
 
+# Configure logging
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
+
 
 # ============================================================================
 # Run Execution Entry Points
@@ -46,12 +65,15 @@ def execute_run(run_id: str):
     Flow (Phase 1-2 - Interactive Spec Generation):
     1. Load run, workspace, and conversation context
     2. Phase 1: Call Orchestrator to generate SpecDeltas
-    3. Phase 2: Apply deltas via SpecManager and persist to DB
-    4. If requires_user_input: pause and wait for user response
-    5. Create assistant message with results
+    3. PAUSE at awaiting_approval - Wait for user to approve/reject
+    4. Phase 2 (on approve): Apply deltas via SpecManager and persist to DB
+    
+    IMPORTANT: This function EXITS at awaiting_approval state.
+    The workflow continues via approve_run_deltas() or reject_run_deltas().
     
     Note: This does NOT run the full pipeline (build). User triggers build separately.
     """
+    logger.info(f"[execute_run] START run_id={run_id}")
     db = SessionLocal()
     
     try:
@@ -59,18 +81,24 @@ def execute_run(run_id: str):
         run = db.query(Run).filter(Run.id == run_uuid).first()
         
         if not run:
-            print(f"[RunService] Run {run_id} not found")
+            logger.error(f"[execute_run] Run {run_id} NOT FOUND")
             return
+        
+        logger.info(f"[execute_run] Run found: status={run.status}, workspace_id={run.workspace_id}")
         
         workspace = db.query(Workspace).filter(Workspace.id == run.workspace_id).first()
         if not workspace:
+            logger.error(f"[execute_run] Workspace not found for run {run_id}")
             _fail_run(db, run, "Workspace not found")
             return
+        
+        logger.info(f"[execute_run] Workspace: name={workspace.name}, spec_version={workspace.spec_version}")
         
         # Update run status to running
         run.status = "running"
         run.started_at = datetime.utcnow()
         db.commit()
+        logger.info(f"[execute_run] Status changed: queued → running")
         
         emit_event_sync(db, run.id, EventType.RUN_STATUS, {
             "status": "running",
@@ -100,6 +128,7 @@ def execute_run(run_id: str):
         # ====================================================================
         # Phase 1: Orchestrator - Convert prompt to SpecDeltas
         # ====================================================================
+        logger.info(f"[execute_run] PHASE 1 START: Calling Orchestrator")
         
         emit_event_sync(db, run.id, EventType.LOG_APPEND, {
             "message": "Phase 1: Analyzing prompt with AI...",
@@ -110,14 +139,18 @@ def execute_run(run_id: str):
         
         # Load current spec from workspace (may be None for new workspace)
         current_spec = _load_spec_from_workspace(workspace)
+        logger.info(f"[execute_run] Current spec: {'exists' if current_spec else 'None'}")
         
         # Call Orchestrator
         orchestrator = Orchestrator()
+        logger.info(f"[execute_run] Calling orchestrator.process_prompt()")
         orchestrator_response = orchestrator.process_prompt(
             user_prompt=user_prompt,
             current_spec=current_spec,
             context=conversation_context
         )
+        
+        logger.info(f"[execute_run] PHASE 1 COMPLETE: deltas={len(orchestrator_response.deltas)}, requires_input={orchestrator_response.requires_user_input}")
         
         emit_event_sync(db, run.id, EventType.TASK_FINISHED, {
             "task": "orchestrator",
@@ -154,6 +187,11 @@ def execute_run(run_id: str):
         # ====================================================================
         # PAUSE: Wait for user approval before applying deltas
         # ====================================================================
+        logger.info(f"[execute_run] ENTERING AWAITING_APPROVAL STATE")
+        logger.info(f"[execute_run] Pending deltas count: {len(deltas_data)}")
+        logger.info(f"[execute_run] >>> WORKFLOW PAUSED - Waiting for user to call:")
+        logger.info(f"[execute_run] >>>   POST /api/runs/{run.id}/approve  (to apply changes)")
+        logger.info(f"[execute_run] >>>   POST /api/runs/{run.id}/reject   (to discard changes)")
         
         emit_event_sync(db, run.id, EventType.LOG_APPEND, {
             "message": f"⏸ Generated {len(deltas_data)} changes. Waiting for your approval...",
@@ -173,6 +211,7 @@ def execute_run(run_id: str):
             "user_prompt": user_prompt
         }
         db.commit()
+        logger.info(f"[execute_run] Status committed: running → awaiting_approval")
         
         # Emit awaiting_approval event with all info frontend needs
         emit_event_sync(db, run.id, EventType.RUN_STATUS, {
@@ -196,6 +235,7 @@ def execute_run(run_id: str):
                 "tools_count": len(current_spec.tools) if current_spec else 0,
             }
         })
+        logger.info(f"[execute_run] Emitted run.awaiting_approval event")
         
         # Create assistant message showing the preview
         if run.conversation_id:
@@ -269,6 +309,8 @@ def approve_run_deltas(
     Called when user clicks 'Approve' on the preview.
     Optionally accepts modified deltas if user edited them before approving.
     
+    NOTE: Even if there are 0 deltas, approval should succeed (marks run as complete).
+    
     Args:
         run_id: The run ID
         modified_deltas: Optional list of modified deltas to use instead of pending ones
@@ -276,6 +318,7 @@ def approve_run_deltas(
     Returns:
         Dict with success status, new spec version, and spec summary
     """
+    logger.info(f"[approve_run_deltas] START run_id={run_id}")
     db = SessionLocal()
     
     try:
@@ -283,21 +326,28 @@ def approve_run_deltas(
         run = db.query(Run).filter(Run.id == run_uuid).first()
         
         if not run:
+            logger.error(f"[approve_run_deltas] Run {run_id} NOT FOUND")
             return {"success": False, "error": "Run not found"}
         
+        logger.info(f"[approve_run_deltas] Run found: status={run.status}")
+        
         if run.status != "awaiting_approval":
+            logger.error(f"[approve_run_deltas] Run not in awaiting_approval state: {run.status}")
             return {"success": False, "error": f"Run is not awaiting approval (status: {run.status})"}
         
         workspace = db.query(Workspace).filter(Workspace.id == run.workspace_id).first()
         if not workspace:
+            logger.error(f"[approve_run_deltas] Workspace not found")
             return {"success": False, "error": "Workspace not found"}
         
         # Get deltas to apply (modified ones or original pending ones)
         pending_result = run.result or {}
         deltas_data = modified_deltas if modified_deltas is not None else pending_result.get("pending_deltas", [])
         
-        if not deltas_data:
-            return {"success": False, "error": "No deltas to apply"}
+        logger.info(f"[approve_run_deltas] Deltas to apply: {len(deltas_data)}")
+        
+        # NOTE: Even 0 deltas is valid - just means no changes to make
+        # The approval still succeeds and marks the run as complete
         
         user_prompt = pending_result.get("user_prompt", "User request")
         
@@ -313,10 +363,12 @@ def approve_run_deltas(
         
         run.status = "running"
         db.commit()
+        logger.info(f"[approve_run_deltas] Status changed: awaiting_approval → running")
         
         # ====================================================================
         # Phase 2: Apply deltas and persist to DB
         # ====================================================================
+        logger.info(f"[approve_run_deltas] PHASE 2 START: Applying {len(deltas_data)} deltas")
         
         emit_event_sync(db, run.id, EventType.LOG_APPEND, {
             "message": "Phase 2: Applying spec changes...",
@@ -328,7 +380,7 @@ def approve_run_deltas(
         # Convert dicts back to SpecDelta objects
         deltas = [SpecDelta(**d) for d in deltas_data]
         
-        # Apply deltas and get new spec
+        # Apply deltas and get new spec (even if empty, this handles spec initialization)
         new_spec, applied_deltas = _apply_deltas_to_workspace(
             db=db,
             workspace=workspace,
@@ -338,6 +390,7 @@ def approve_run_deltas(
             change_notes=f"Generated from: {user_prompt[:50]}..."
         )
         
+        logger.info(f"[approve_run_deltas] PHASE 2 COMPLETE: applied {len(applied_deltas)} deltas")
         emit_event_sync(db, run.id, EventType.TASK_FINISHED, {"task": "spec_manager"})
         
         # Emit spec.saved event with full details
@@ -484,7 +537,7 @@ def reject_run_deltas(run_id: str, reason: Optional[str] = None) -> Dict[str, An
     Reject pending deltas - do not apply them to the workspace spec
     
     Called when user clicks 'Reject' on the preview.
-    The run is marked as cancelled and no changes are made to the spec.
+    The run is marked as rejected and no changes are made to the spec.
     
     Args:
         run_id: The run ID
@@ -493,6 +546,7 @@ def reject_run_deltas(run_id: str, reason: Optional[str] = None) -> Dict[str, An
     Returns:
         Dict with success status
     """
+    logger.info(f"[reject_run_deltas] START run_id={run_id}, reason={reason}")
     db = SessionLocal()
     
     try:
@@ -500,9 +554,13 @@ def reject_run_deltas(run_id: str, reason: Optional[str] = None) -> Dict[str, An
         run = db.query(Run).filter(Run.id == run_uuid).first()
         
         if not run:
+            logger.error(f"[reject_run_deltas] Run {run_id} NOT FOUND")
             return {"success": False, "error": "Run not found"}
         
+        logger.info(f"[reject_run_deltas] Run found: status={run.status}")
+        
         if run.status != "awaiting_approval":
+            logger.error(f"[reject_run_deltas] Run not in awaiting_approval state: {run.status}")
             return {"success": False, "error": f"Run is not awaiting approval (status: {run.status})"}
         
         workspace = db.query(Workspace).filter(Workspace.id == run.workspace_id).first()
@@ -523,6 +581,7 @@ def reject_run_deltas(run_id: str, reason: Optional[str] = None) -> Dict[str, An
             "pending_deltas_discarded": len((run.result or {}).get("pending_deltas", []))
         }
         db.commit()
+        logger.info(f"[reject_run_deltas] Status changed: awaiting_approval → rejected")
         
         emit_event_sync(db, run.id, EventType.RUN_STATUS, {
             "status": "rejected",
@@ -530,6 +589,7 @@ def reject_run_deltas(run_id: str, reason: Optional[str] = None) -> Dict[str, An
             "run_id": str(run.id),
             "reason": reason
         })
+        logger.info(f"[reject_run_deltas] COMPLETE")
         
         # Create assistant message acknowledging rejection
         if run.conversation_id:
