@@ -52,6 +52,10 @@ class EventType:
     # Asset events
     ASSET_GENERATED = "asset.generated"  # New asset generated (texture candidate)
     ASSET_SELECTED = "asset.selected"  # Asset selected by user
+
+    # Texture selection events
+    TEXTURE_SELECTION_REQUIRED = "texture.selection_required"  # Run paused, waiting for user to select texture variant
+    TEXTURE_SELECTED = "texture.selected"  # User selected a texture variant
     
     # Artifact events
     ARTIFACT_CREATED = "artifact.created"  # New artifact available (JAR, etc.)

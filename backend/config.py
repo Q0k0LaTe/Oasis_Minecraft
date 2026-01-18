@@ -67,7 +67,7 @@ AI_MAX_RETRIES = int(os.getenv("AI_MAX_RETRIES", "3"))  # Max retries for failed
 IMAGE_MODEL = "gemini-3-pro-image-preview"  # Gemini 3 Pro for texture generation with reference guidance
 IMAGE_SIZE = "1024x1024"  # Will be resized to 16x16
 IMAGE_QUALITY = "standard"  # standard or hd
-IMAGE_VARIANT_COUNT = 5  # Number of texture variants to generate for user selection
+IMAGE_VARIANT_COUNT = 3  # Number of texture variants to generate for user selection
 IMAGE_GENERATION_TIMEOUT = float(os.getenv("IMAGE_GENERATION_TIMEOUT", "180.0"))  # Longer timeout for image generation
 
 # =============================================================================

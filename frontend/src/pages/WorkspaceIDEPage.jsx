@@ -16,6 +16,7 @@ import PropertiesPanel from '../components/PropertiesPanel.jsx';
 import ConversationPanel from '../components/ConversationPanel.jsx';
 import SpecEditor from '../components/SpecEditor.jsx';
 import ApprovalDialog from '../components/ApprovalDialog.jsx';
+import TextureSelectionDialog from '../components/TextureSelectionDialog.jsx';
 
 export default function WorkspaceIDEPage() {
   const { workspaceId } = useParams();
@@ -46,6 +47,7 @@ export default function WorkspaceIDEPage() {
   const [currentRunId, setCurrentRunId] = useState(null);
   const [showSpecEditor, setShowSpecEditor] = useState(false);
   const [showApprovalDialog, setShowApprovalDialog] = useState(false);
+  const [showTextureSelectionDialog, setShowTextureSelectionDialog] = useState(false);
   const [buildArtifacts, setBuildArtifacts] = useState([]);
   const [isSending, setIsSending] = useState(false);
 
@@ -56,6 +58,7 @@ export default function WorkspaceIDEPage() {
     progress,
     events,
     pendingDeltas,
+    pendingTextures,
     artifacts,
     clearEvents,
     reconnect,
@@ -67,6 +70,10 @@ export default function WorkspaceIDEPage() {
     onArtifact: (artifact) => {
       setBuildArtifacts(prev => [...prev, artifact]);
     },
+    onTextureSelectionRequired: () => {
+      // Show texture selection dialog
+      setShowTextureSelectionDialog(true);
+    },
   });
 
   // Show approval dialog when awaiting approval (even with 0 deltas)
@@ -75,6 +82,20 @@ export default function WorkspaceIDEPage() {
       setShowApprovalDialog(true);
     }
   }, [runStatus]);
+
+  // Show texture selection dialog when awaiting texture selection
+  useEffect(() => {
+    if (runStatus === 'awaiting_texture_selection') {
+      setShowTextureSelectionDialog(true);
+    }
+    // Hide texture selection dialog when status changes away from awaiting_texture_selection
+    if (runStatus !== 'awaiting_texture_selection' && showTextureSelectionDialog) {
+      // Check if there are still pending textures
+      if (Object.keys(pendingTextures).length === 0) {
+        setShowTextureSelectionDialog(false);
+      }
+    }
+  }, [runStatus, pendingTextures, showTextureSelectionDialog]);
 
   // Initial data load
   useEffect(() => {
@@ -214,6 +235,20 @@ export default function WorkspaceIDEPage() {
     }
   }, [currentRunId]);
 
+  // Handle texture selection
+  const handleTextureSelect = useCallback(async (entityId, variantIndex) => {
+    if (!currentRunId) return;
+
+    try {
+      const result = await runsApi.selectTexture(currentRunId, entityId, variantIndex);
+      // If all textures selected, the dialog will be hidden via the useEffect
+      return result;
+    } catch (err) {
+      console.error('Error selecting texture:', err);
+      throw err;
+    }
+  }, [currentRunId]);
+
   // Handle artifact download
   const handleDownload = useCallback(async (artifact) => {
     if (!currentRunId) return;
@@ -331,6 +366,14 @@ export default function WorkspaceIDEPage() {
           onApprove={handleApprove}
           onReject={handleReject}
           onClose={() => setShowApprovalDialog(false)}
+        />
+      )}
+
+      {showTextureSelectionDialog && Object.keys(pendingTextures).length > 0 && (
+        <TextureSelectionDialog
+          pendingTextures={pendingTextures}
+          onSelectTexture={handleTextureSelect}
+          onClose={() => setShowTextureSelectionDialog(false)}
         />
       )}
     </div>

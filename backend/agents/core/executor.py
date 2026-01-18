@@ -39,6 +39,7 @@ class Executor:
         self.workspace_dir = Path(workspace_dir)
         self.tool_registry = tool_registry
         self.execution_log = []
+        self.texture_results = {}  # Store texture generation results: {entity_id: {"variants": [bytes], "entity_type": str, "name": str}}
 
     def execute(
         self,
@@ -97,7 +98,8 @@ class Executor:
             "status": "success",
             "completed_tasks": len(dag.completed_task_ids),
             "total_tasks": dag.total_tasks,
-            "execution_log": self.execution_log
+            "execution_log": self.execution_log,
+            "texture_results": self.texture_results  # Include generated textures
         }
 
     def _execute_task(self, task: Task):
@@ -106,7 +108,21 @@ class Executor:
 
         # Execute all tool calls for this task
         for tool_call in task.tool_calls:
-            self._execute_tool_call(tool_call, task.inputs)
+            result = self._execute_tool_call(tool_call, task.inputs)
+
+            # Capture texture generation results
+            if task.task_type == "generate_texture" and result:
+                entity_id = task.inputs.get("entity_id")
+                entity_type = task.inputs.get("entity_type")
+                entity_name = tool_call.parameters.get("item_name", entity_id)
+
+                if entity_id and "texture_variants" in result:
+                    self.texture_results[entity_id] = {
+                        "variants": result["texture_variants"],
+                        "entity_type": entity_type,
+                        "name": entity_name,
+                        "description": tool_call.parameters.get("description", "")
+                    }
 
         task.status = TaskStatus.COMPLETED
 

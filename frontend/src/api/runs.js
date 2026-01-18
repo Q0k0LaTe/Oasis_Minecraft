@@ -41,6 +41,17 @@ export async function rejectRun(runId, reason = null) {
 }
 
 /**
+ * Select a texture variant for an entity during build
+ * POST /api/runs/{run_id}/select-texture
+ */
+export async function selectTexture(runId, entityId, selectedVariantIndex) {
+  return api.post(`/runs/${runId}/select-texture`, {
+    entity_id: entityId,
+    selected_variant_index: selectedVariantIndex,
+  });
+}
+
+/**
  * Get historical events for a run (non-SSE)
  * GET /api/runs/{run_id}/events/history
  */
@@ -297,6 +308,12 @@ function dispatchSSEEvent({ eventType, data }, handlers) {
     case 'artifact.created':
       handlers.onArtifact?.(normalizeArtifactPayload(payload));
       break;
+    case 'texture.selection_required':
+      handlers.onTextureSelectionRequired?.(payload);
+      break;
+    case 'texture.selected':
+      handlers.onTextureSelected?.(payload);
+      break;
     default:
       // Unknown event type - could log for debugging
       console.log('Unknown SSE event:', eventType, payload);
@@ -317,6 +334,7 @@ export default {
   cancelRun,
   approveRun,
   rejectRun,
+  selectTexture,
   getRunEventsHistory,
   listRuns,
   triggerBuild,

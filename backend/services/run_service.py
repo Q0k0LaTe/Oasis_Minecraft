@@ -39,6 +39,7 @@ from services.event_service import (
     emit_event_sync,
     EventType,
 )
+import base64
 from config import GENERATED_DIR, DOWNLOADS_DIR
 
 # Import agents
@@ -608,11 +609,335 @@ def reject_run_deltas(run_id: str, reason: Optional[str] = None) -> Dict[str, An
             "status": "rejected",
             "message": "Changes rejected and discarded"
         }
-        
+
     except Exception as e:
         print(f"[RunService] Error rejecting run {run_id}: {e}")
         traceback.print_exc()
         return {"success": False, "error": str(e)}
+    finally:
+        db.close()
+
+
+def select_texture_variant(
+    run_id: str,
+    entity_id: str,
+    selected_variant_index: int
+) -> Dict[str, Any]:
+    """
+    Select a texture variant for an entity during build
+
+    Called when user clicks on one of the texture variants to select it.
+    Stores the selection and checks if all textures have been selected.
+    If all selections are made, continues the build.
+
+    Args:
+        run_id: The run ID
+        entity_id: ID of the entity (item/block/tool) the texture is for
+        selected_variant_index: Index of the selected variant (0-based)
+
+    Returns:
+        Dict with success status and remaining selections count
+    """
+    logger.info(f"[select_texture_variant] START run_id={run_id}, entity_id={entity_id}, index={selected_variant_index}")
+    db = SessionLocal()
+
+    try:
+        run_uuid = UUID(run_id)
+        run = db.query(Run).filter(Run.id == run_uuid).first()
+
+        if not run:
+            logger.error(f"[select_texture_variant] Run {run_id} NOT FOUND")
+            return {"success": False, "error": "Run not found"}
+
+        logger.info(f"[select_texture_variant] Run found: status={run.status}")
+
+        if run.status != "awaiting_texture_selection":
+            logger.error(f"[select_texture_variant] Run not in awaiting_texture_selection state: {run.status}")
+            return {"success": False, "error": f"Run is not awaiting texture selection (status: {run.status})"}
+
+        workspace = db.query(Workspace).filter(Workspace.id == run.workspace_id).first()
+        if not workspace:
+            logger.error(f"[select_texture_variant] Workspace not found")
+            return {"success": False, "error": "Workspace not found"}
+
+        # Get pending texture selections from run result
+        pending_result = run.result or {}
+        pending_textures = pending_result.get("pending_textures", {})
+        selected_textures = pending_result.get("selected_textures", {})
+
+        if entity_id not in pending_textures:
+            return {"success": False, "error": f"Entity {entity_id} not found in pending textures"}
+
+        entity_data = pending_textures[entity_id]
+        variants = entity_data.get("variants", [])
+
+        if selected_variant_index < 0 or selected_variant_index >= len(variants):
+            return {"success": False, "error": f"Invalid variant index: {selected_variant_index}"}
+
+        # Store the selection
+        selected_textures[entity_id] = {
+            "variant_index": selected_variant_index,
+            "texture_data": variants[selected_variant_index],  # Base64 encoded
+            "entity_type": entity_data.get("entity_type"),
+            "name": entity_data.get("name")
+        }
+
+        # Remove from pending
+        del pending_textures[entity_id]
+
+        # Update run result
+        run.result = {
+            **pending_result,
+            "pending_textures": pending_textures,
+            "selected_textures": selected_textures
+        }
+        db.commit()
+
+        emit_event_sync(db, run.id, EventType.TEXTURE_SELECTED, {
+            "entity_id": entity_id,
+            "selected_variant_index": selected_variant_index,
+            "entity_name": entity_data.get("name"),
+            "remaining_count": len(pending_textures)
+        })
+
+        emit_event_sync(db, run.id, EventType.LOG_APPEND, {
+            "message": f"✓ Selected texture variant {selected_variant_index + 1} for {entity_data.get('name', entity_id)}",
+            "level": "info"
+        })
+
+        remaining_count = len(pending_textures)
+        logger.info(f"[select_texture_variant] Selection saved. Remaining: {remaining_count}")
+
+        # If all textures selected, continue the build
+        if remaining_count == 0:
+            logger.info(f"[select_texture_variant] All textures selected, continuing build...")
+            emit_event_sync(db, run.id, EventType.LOG_APPEND, {
+                "message": "✓ All textures selected. Continuing build...",
+                "level": "info"
+            })
+
+            # Continue build in background
+            from threading import Thread
+            thread = Thread(target=continue_build_after_texture_selection, args=(run_id,))
+            thread.start()
+
+        return {
+            "success": True,
+            "message": f"Texture selected for {entity_data.get('name', entity_id)}",
+            "remaining_selections": remaining_count
+        }
+
+    except Exception as e:
+        print(f"[RunService] Error selecting texture for run {run_id}: {e}")
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
+    finally:
+        db.close()
+
+
+def continue_build_after_texture_selection(run_id: str):
+    """
+    Continue the build process after all textures have been selected
+
+    This function resumes the build from Phase 6 (Validator) after
+    texture selection is complete.
+    """
+    logger.info(f"[continue_build_after_texture_selection] START run_id={run_id}")
+    db = SessionLocal()
+
+    try:
+        run_uuid = UUID(run_id)
+        run = db.query(Run).filter(Run.id == run_uuid).first()
+
+        if not run:
+            logger.error(f"[continue_build_after_texture_selection] Run {run_id} NOT FOUND")
+            return
+
+        workspace = db.query(Workspace).filter(Workspace.id == run.workspace_id).first()
+        if not workspace:
+            _fail_run(db, run, "Workspace not found")
+            return
+
+        # Update run status
+        run.status = "running"
+        db.commit()
+
+        emit_event_sync(db, run.id, EventType.RUN_STATUS, {
+            "status": "running",
+            "workspace_id": str(workspace.id),
+            "run_id": str(run.id)
+        })
+
+        # Get selected textures from run result
+        pending_result = run.result or {}
+        selected_textures = pending_result.get("selected_textures", {})
+        mod_ir_data = pending_result.get("mod_ir")
+        pipeline_job_id = pending_result.get("pipeline_job_id")
+
+        if not mod_ir_data:
+            _fail_run(db, run, "No mod IR found in run result")
+            return
+
+        # Reconstruct pipeline and apply selected textures
+        from agents.pipeline import ModGenerationPipeline
+        from agents.schemas import ModSpec
+
+        # Create pipeline
+        pipeline = ModGenerationPipeline(job_id=pipeline_job_id or str(run.id))
+
+        # Get the mod spec
+        spec_data = workspace.spec
+        mod_spec = ModSpec(**spec_data)
+
+        # Write selected textures to the mod assets
+        from pathlib import Path
+        assets_base = pipeline.workspace_dir / "src" / "main" / "resources" / "assets" / mod_ir_data.get("mod_id", "tutorialmod") / "textures"
+
+        for entity_id, selection in selected_textures.items():
+            entity_type = selection.get("entity_type", "item")
+            texture_data = selection.get("texture_data")
+
+            if texture_data:
+                # Determine texture path based on entity type
+                if entity_type == "block":
+                    texture_path = assets_base / "block" / f"{entity_id}.png"
+                else:
+                    texture_path = assets_base / "item" / f"{entity_id}.png"
+
+                texture_path.parent.mkdir(parents=True, exist_ok=True)
+
+                # Decode base64 and write texture
+                if isinstance(texture_data, str):
+                    texture_bytes = base64.b64decode(texture_data)
+                else:
+                    texture_bytes = texture_data
+
+                texture_path.write_bytes(texture_bytes)
+                logger.info(f"[continue_build] Wrote texture for {entity_id} to {texture_path}")
+
+        emit_event_sync(db, run.id, EventType.LOG_APPEND, {
+            "message": "✓ Applied selected textures to mod",
+            "level": "info"
+        })
+
+        # Continue with Phase 6: Validator and Phase 7: Builder
+        emit_event_sync(db, run.id, EventType.LOG_APPEND, {
+            "message": "Phase 6: Validating generated files...",
+            "level": "info"
+        })
+        emit_event_sync(db, run.id, EventType.RUN_PROGRESS, {"progress": 70})
+
+        # Reconstruct ModIR from stored data
+        from agents.schemas import ModIR
+        mod_ir = ModIR(**mod_ir_data)
+
+        try:
+            validation_result = pipeline.validator.validate(ir=mod_ir)
+            emit_event_sync(db, run.id, EventType.LOG_APPEND, {
+                "message": f"✓ Validation passed ({validation_result.get('warnings', 0)} warnings)",
+                "level": "info"
+            })
+        except Exception as ve:
+            emit_event_sync(db, run.id, EventType.LOG_APPEND, {
+                "message": f"⚠ Validation warning: {ve}",
+                "level": "warning"
+            })
+
+        # Phase 7: Builder - Gradle build
+        emit_event_sync(db, run.id, EventType.LOG_APPEND, {
+            "message": "Phase 7: Building JAR with Gradle (1-2 minutes)...",
+            "level": "info"
+        })
+        emit_event_sync(db, run.id, EventType.RUN_PROGRESS, {"progress": 80})
+        emit_event_sync(db, run.id, EventType.TASK_STARTED, {"task": "gradle_build"})
+
+        def progress_callback(msg: str):
+            emit_event_sync(db, run.id, EventType.LOG_APPEND, {
+                "message": msg,
+                "level": "info"
+            })
+
+        build_result = pipeline.builder.build(
+            mod_id=mod_ir.mod_id,
+            progress_callback=progress_callback
+        )
+
+        emit_event_sync(db, run.id, EventType.TASK_FINISHED, {
+            "task": "gradle_build",
+            "status": build_result.get("status")
+        })
+
+        if build_result["status"] == "success":
+            jar_path = build_result["jar_path"]
+
+            # Copy JAR to downloads
+            import shutil
+            final_jar_path = DOWNLOADS_DIR / f"{mod_ir.mod_id}.jar"
+            shutil.copy(jar_path, final_jar_path)
+
+            # Create artifact record
+            artifact = Artifact(
+                run_id=run.id,
+                workspace_id=workspace.id,
+                artifact_type="jar",
+                file_path=str(final_jar_path),
+                file_name=f"{mod_ir.mod_id}.jar",
+                file_size=final_jar_path.stat().st_size if final_jar_path.exists() else None,
+                mime_type="application/java-archive",
+                meta_data={
+                    "mod_id": mod_ir.mod_id,
+                    "mod_name": mod_ir.mod_name,
+                    "version": mod_spec.version,
+                    "spec_version": workspace.spec_version
+                }
+            )
+            db.add(artifact)
+            db.commit()
+            db.refresh(artifact)
+
+            emit_event_sync(db, run.id, EventType.ARTIFACT_CREATED, {
+                "artifact_id": str(artifact.id),
+                "artifact_type": "jar",
+                "file_name": artifact.file_name,
+                "download_url": f"/api/runs/{run.id}/artifacts/{artifact.id}/download",
+                "workspace_id": str(workspace.id),
+                "run_id": str(run.id)
+            })
+
+            emit_event_sync(db, run.id, EventType.LOG_APPEND, {
+                "message": f"✓ Build successful: {artifact.file_name}",
+                "level": "info"
+            })
+            emit_event_sync(db, run.id, EventType.RUN_PROGRESS, {"progress": 100})
+
+            # Mark run as succeeded
+            run.status = "succeeded"
+            run.finished_at = datetime.utcnow()
+            run.result = {
+                "phase": "build",
+                "mod_id": mod_ir.mod_id,
+                "mod_name": mod_ir.mod_name,
+                "jar_file": artifact.file_name,
+                "artifact_id": str(artifact.id),
+                "spec_version": workspace.spec_version
+            }
+
+            db.commit()
+            emit_event_sync(db, run.id, EventType.RUN_STATUS, {
+                "status": "succeeded",
+                "workspace_id": str(workspace.id),
+                "run_id": str(run.id)
+            })
+
+        else:
+            error_msg = build_result.get("error", "Build failed")
+            _fail_run(db, run, error_msg)
+
+    except Exception as e:
+        print(f"[RunService] Error continuing build {run_id}: {e}")
+        traceback.print_exc()
+        if run:
+            _fail_run(db, run, str(e))
     finally:
         db.close()
 
@@ -752,8 +1077,72 @@ def execute_build(run_id: str):
                 "completed": exec_result.get("completed_tasks", 0),
                 "total": exec_result.get("total_tasks", 0)
             })
-            
-            # Phase 6: Validator
+
+            # ====================================================================
+            # Phase 5.5: Texture Selection (if textures were generated)
+            # ====================================================================
+            texture_results = exec_result.get("texture_results", {})
+
+            if texture_results:
+                logger.info(f"[execute_build] Texture generation complete. {len(texture_results)} entities need texture selection.")
+
+                # Convert texture bytes to base64 for frontend
+                pending_textures = {}
+                for entity_id, texture_data in texture_results.items():
+                    variants = texture_data.get("variants", [])
+                    # Convert bytes to base64
+                    variants_b64 = []
+                    for variant in variants:
+                        if isinstance(variant, bytes):
+                            variants_b64.append(base64.b64encode(variant).decode('utf-8'))
+                        else:
+                            variants_b64.append(variant)
+
+                    pending_textures[entity_id] = {
+                        "variants": variants_b64,
+                        "entity_type": texture_data.get("entity_type"),
+                        "name": texture_data.get("name"),
+                        "description": texture_data.get("description", "")
+                    }
+
+                emit_event_sync(db, run.id, EventType.LOG_APPEND, {
+                    "message": f"⏸ Generated {len(pending_textures)} textures. Please select your preferred variant for each.",
+                    "level": "warning"
+                })
+                emit_event_sync(db, run.id, EventType.RUN_PROGRESS, {"progress": 55})
+
+                # Store pending textures and mod_ir in run result
+                run.status = "awaiting_texture_selection"
+                run.result = {
+                    "phase": "5.5",
+                    "pending_textures": pending_textures,
+                    "selected_textures": {},
+                    "mod_ir": mod_ir.model_dump(),
+                    "pipeline_job_id": job_id,
+                    "spec_version": workspace.spec_version
+                }
+                db.commit()
+                logger.info(f"[execute_build] Status changed: running → awaiting_texture_selection")
+
+                emit_event_sync(db, run.id, EventType.RUN_STATUS, {
+                    "status": "awaiting_texture_selection",
+                    "workspace_id": str(workspace.id),
+                    "run_id": str(run.id)
+                })
+
+                # Emit texture selection event with all texture variants
+                emit_event_sync(db, run.id, EventType.TEXTURE_SELECTION_REQUIRED, {
+                    "workspace_id": str(workspace.id),
+                    "run_id": str(run.id),
+                    "pending_textures": pending_textures,
+                    "textures_count": len(pending_textures)
+                })
+                logger.info(f"[execute_build] Emitted texture.selection_required event")
+
+                # Exit - wait for user to select textures
+                return
+
+            # Phase 6: Validator (no texture selection needed)
             emit_event_sync(db, run.id, EventType.LOG_APPEND, {
                 "message": "Phase 6: Validating generated files...",
                 "level": "info"
