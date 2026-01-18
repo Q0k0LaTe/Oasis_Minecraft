@@ -63,6 +63,16 @@ def generate_assets(
 
         # Add to lang file
         lang_entries[f"item.{mod_id}.{item_id}"] = display_name
+        item_definition_path = assets_path / "items" / f"{item_id}.json"
+        item_definition_path.parent.mkdir(parents=True, exist_ok=True)
+        item_definition_json = {
+            "model": {
+                "type": "minecraft:model",
+                "model": f"{mod_id}:item/{item_id}"
+            }
+        }
+        item_definition_path.write_text(json.dumps(item_definition_json, indent=2))
+        generated_files.append(str(item_definition_path))
 
         # Generate item model
         model_path = assets_path / "models" / "item" / f"{item_id}.json"
@@ -121,6 +131,18 @@ def generate_assets(
         block_model_path.write_text(json.dumps(block_model_json, indent=2))
         generated_files.append(str(block_model_path))
 
+        # Generate block item definition (required by newer Minecraft versions)
+        block_item_definition_path = assets_path / "items" / f"{block_id}.json"
+        block_item_definition_path.parent.mkdir(parents=True, exist_ok=True)
+        block_item_definition_json = {
+            "model": {
+                "type": "minecraft:model",
+                "model": f"{mod_id}:block/{block_id}"
+            }
+        }
+        block_item_definition_path.write_text(json.dumps(block_item_definition_json, indent=2))
+        generated_files.append(str(block_item_definition_path))
+
         # Generate block item model
         item_model_path = assets_path / "models" / "item" / f"{block_id}.json"
         item_model_path.parent.mkdir(parents=True, exist_ok=True)
@@ -167,6 +189,16 @@ def generate_assets(
         display_name = tool.get("display_name", tool_id.replace("_", " ").title())
 
         lang_entries[f"item.{mod_id}.{tool_id}"] = display_name
+        tool_definition_path = assets_path / "items" / f"{tool_id}.json"
+        tool_definition_path.parent.mkdir(parents=True, exist_ok=True)
+        tool_definition_json = {
+            "model": {
+                "type": "minecraft:model",
+                "model": f"{mod_id}:item/{tool_id}"
+            }
+        }
+        tool_definition_path.write_text(json.dumps(tool_definition_json, indent=2))
+        generated_files.append(str(tool_definition_path))
 
         # Generate model
         model_path = assets_path / "models" / "item" / f"{tool_id}.json"
