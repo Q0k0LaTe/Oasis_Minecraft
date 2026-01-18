@@ -295,12 +295,21 @@ function dispatchSSEEvent({ eventType, data }, handlers) {
       handlers.onAwaitingInput?.(payload);
       break;
     case 'artifact.created':
-      handlers.onArtifact?.(payload);
+      handlers.onArtifact?.(normalizeArtifactPayload(payload));
       break;
     default:
       // Unknown event type - could log for debugging
       console.log('Unknown SSE event:', eventType, payload);
   }
+}
+
+function normalizeArtifactPayload(payload) {
+  if (!payload || typeof payload !== 'object') return payload;
+  if (payload.id) return payload;
+  if (payload.artifact_id) {
+    return { ...payload, id: payload.artifact_id };
+  }
+  return payload;
 }
 
 export default {

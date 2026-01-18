@@ -10,6 +10,8 @@ Responsibilities:
 This wraps the existing Gradle compilation logic from mod_generator.py
 """
 import subprocess
+import os
+import shutil
 from pathlib import Path
 from typing import Dict, Any, Optional, Callable
 
@@ -59,11 +61,28 @@ class Builder:
         if not mod_dir.exists():
             raise BuildError(f"Mod directory not found: {mod_dir}")
 
+        # Ensure Gradle wrapper exists (copy from template if missing)
+        wrapper_template_dir = Path(__file__).resolve().parents[2] / "templates" / "gradle_wrapper_template"
+        if not (mod_dir / "gradlew").exists() and not (mod_dir / "gradlew.bat").exists():
+            if wrapper_template_dir.exists():
+                shutil.copytree(wrapper_template_dir, mod_dir, dirs_exist_ok=True)
+                log("Gradle wrapper missing; copied from template.")
+            else:
+                log(f"Gradle wrapper template not found: {wrapper_template_dir}")
+
         # Run Gradle build
         try:
-            log("Running: ./gradlew build")
+            gradle_cmd = ["./gradlew", "build", "--no-daemon"]
+            if os.name == "nt":
+                if (mod_dir / "gradlew.bat").exists():
+                    gradle_cmd = [str(mod_dir / "gradlew.bat"), "build", "--no-daemon"]
+                else:
+                    gradle_cmd = ["gradle", "build", "--no-daemon"]
+            elif (mod_dir / "gradlew").exists():
+                gradle_cmd = [str(mod_dir / "gradlew"), "build", "--no-daemon"]
+            log(f"Running: {' '.join(gradle_cmd)}")
             result = subprocess.run(
-                ["./gradlew", "build", "--no-daemon"],
+                gradle_cmd,
                 cwd=mod_dir,
                 capture_output=True,
                 text=True,
