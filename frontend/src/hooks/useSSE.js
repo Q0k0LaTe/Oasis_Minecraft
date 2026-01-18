@@ -18,20 +18,23 @@ export const SSE_EVENT_TYPES = {
   AWAITING_APPROVAL: 'run.awaiting_approval',
   AWAITING_INPUT: 'run.awaiting_input',
   ARTIFACT: 'artifact.created',
+  TEXTURE_SELECTION_REQUIRED: 'texture.selection_required',
+  TEXTURE_SELECTED: 'texture.selected',
 };
 
 /**
  * useSSE hook
- * 
+ *
  * @param {string|null} runId - Run ID to subscribe to (null to disable)
  * @param {object} options - Configuration options
  * @param {function} [options.onSpecSaved] - Callback when spec is saved
  * @param {function} [options.onArtifact] - Callback when artifact is created
+ * @param {function} [options.onTextureSelectionRequired] - Callback when texture selection is needed
  * @param {boolean} [options.autoReconnect=true] - Whether to auto-reconnect on disconnect
  * @returns {object} - SSE state and controls
  */
 export function useSSE(runId, options = {}) {
-  const { onSpecSaved, onArtifact, autoReconnect = true } = options;
+  const { onSpecSaved, onArtifact, onTextureSelectionRequired, autoReconnect = true } = options;
 
   // State
   const [status, setStatus] = useState('idle'); // idle, connecting, connected, disconnected, error
@@ -41,6 +44,7 @@ export function useSSE(runId, options = {}) {
   const [pendingDeltas, setPendingDeltas] = useState([]);
   const [clarifyingQuestions, setClarifyingQuestions] = useState([]);
   const [artifacts, setArtifacts] = useState([]);
+  const [pendingTextures, setPendingTextures] = useState({});
   const [error, setError] = useState(null);
 
   // Refs
@@ -67,6 +71,7 @@ export function useSSE(runId, options = {}) {
     setPendingDeltas([]);
     setClarifyingQuestions([]);
     setArtifacts([]);
+    setPendingTextures({});
     setProgress(0);
     setRunStatus(null);
   }, []);
@@ -144,6 +149,23 @@ export function useSSE(runId, options = {}) {
         onArtifact?.(payload);
       },
 
+      onTextureSelectionRequired: (payload) => {
+        setRunStatus('awaiting_texture_selection');
+        setPendingTextures(payload.pending_textures || {});
+        addEvent(SSE_EVENT_TYPES.TEXTURE_SELECTION_REQUIRED, payload, 'warning');
+        onTextureSelectionRequired?.(payload);
+      },
+
+      onTextureSelected: (payload) => {
+        // Update pending textures by removing the selected one
+        setPendingTextures(prev => {
+          const updated = { ...prev };
+          delete updated[payload.entity_id];
+          return updated;
+        });
+        addEvent(SSE_EVENT_TYPES.TEXTURE_SELECTED, payload, 'success');
+      },
+
       onError: (err) => {
         // Don't show error for normal network close or abort
         const errorMessage = err.message || 'Unknown error';
@@ -216,6 +238,9 @@ export function useSSE(runId, options = {}) {
     // Approval state
     pendingDeltas,
     clarifyingQuestions,
+
+    // Texture selection state
+    pendingTextures,
 
     // Artifacts
     artifacts,

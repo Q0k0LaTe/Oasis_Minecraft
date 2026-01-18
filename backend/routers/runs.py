@@ -123,6 +123,14 @@ class RejectRequest(BaseModel):
     """Optional: reason for rejection"""
 
 
+class TextureSelectionRequest(BaseModel):
+    """Request body for selecting a texture variant"""
+    entity_id: str
+    """ID of the entity (item/block/tool) the texture is for"""
+    selected_variant_index: int
+    """Index of the selected variant (0-based)"""
+
+
 @router.post("/{run_id}/approve")
 async def approve_run(
     run_id: UUID,
@@ -207,6 +215,52 @@ async def reject_run(
             detail=result.get("error", "Failed to reject deltas")
         )
     
+    return result
+
+
+@router.post("/{run_id}/select-texture")
+async def select_texture(
+    run_id: UUID,
+    request: TextureSelectionRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Select a texture variant for an entity during build
+
+    Called when user selects one of the generated texture variants.
+    The selected texture will be used for the entity in the final mod.
+
+    Only works for runs in 'awaiting_texture_selection' status.
+
+    Returns:
+        - success: bool
+        - message: confirmation message
+        - remaining_selections: number of remaining texture selections needed
+    """
+    run = get_run_or_404(run_id, user, db)
+
+    if run.status != "awaiting_texture_selection":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Run is not awaiting texture selection (status: {run.status})"
+        )
+
+    # Call the service function
+    from services.run_service import select_texture_variant
+
+    result = select_texture_variant(
+        str(run_id),
+        request.entity_id,
+        request.selected_variant_index
+    )
+
+    if not result.get("success"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=result.get("error", "Failed to select texture")
+        )
+
     return result
 
 
