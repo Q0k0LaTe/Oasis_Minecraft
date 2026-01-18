@@ -16,7 +16,7 @@ export default function AuthPage() {
   return (
     <div className="auth-page">
       <div className="auth-container">
-        <h1 className="auth-title">Oasis Minecraft</h1>
+        <h1 className="auth-title">Modcraft</h1>
         <p className="auth-subtitle">AI-Powered Mod Generator</p>
 
         <div className="auth-tabs">
