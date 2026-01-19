@@ -798,11 +798,14 @@ def continue_build_after_texture_selection(run_id: str):
             texture_data = selection.get("texture_data")
 
             if texture_data:
+                # Strip namespace prefix (e.g., "mymod:ruby" -> "ruby")
+                texture_name = entity_id.split(":")[-1] if ":" in entity_id else entity_id
+
                 # Determine texture path based on entity type
                 if entity_type == "block":
-                    texture_path = assets_base / "block" / f"{entity_id}.png"
+                    texture_path = assets_base / "block" / f"{texture_name}.png"
                 else:
-                    texture_path = assets_base / "item" / f"{entity_id}.png"
+                    texture_path = assets_base / "item" / f"{texture_name}.png"
 
                 texture_path.parent.mkdir(parents=True, exist_ok=True)
 
