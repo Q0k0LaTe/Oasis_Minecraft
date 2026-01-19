@@ -20,7 +20,6 @@ from sqlalchemy import create_engine, text
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from config import DATABASE_URL, DB_NAME, DB_HOST, DB_PORT, DB_USER, DB_PASSWORD
 from database.base import engine, Base
-from database.models import User, UserSession, Job
 
 # Connect to PostgreSQL server (without specifying database) to create database
 admin_url = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/postgres"
