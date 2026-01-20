@@ -643,11 +643,16 @@ def select_texture_variant(
 
     try:
         run_uuid = UUID(run_id)
-        run = db.query(Run).filter(Run.id == run_uuid).first()
+        # Use with_for_update() to lock the row and prevent race conditions
+        # when multiple texture selections come in simultaneously
+        run = db.query(Run).filter(Run.id == run_uuid).with_for_update().first()
 
         if not run:
             logger.error(f"[select_texture_variant] Run {run_id} NOT FOUND")
             return {"success": False, "error": "Run not found"}
+
+        # Refresh to ensure we have the latest data after acquiring lock
+        db.refresh(run)
 
         logger.info(f"[select_texture_variant] Run found: status={run.status}")
 
@@ -661,9 +666,13 @@ def select_texture_variant(
             return {"success": False, "error": "Workspace not found"}
 
         # Get pending texture selections from run result
-        pending_result = run.result or {}
+        # Make deep copies to avoid reference issues with JSON column
+        import copy
+        pending_result = copy.deepcopy(run.result) or {}
         pending_textures = pending_result.get("pending_textures", {})
         selected_textures = pending_result.get("selected_textures", {})
+
+        logger.info(f"[select_texture_variant] Before selection - pending: {list(pending_textures.keys())}, selected: {list(selected_textures.keys())}")
 
         if entity_id not in pending_textures:
             return {"success": False, "error": f"Entity {entity_id} not found in pending textures"}
