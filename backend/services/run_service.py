@@ -643,7 +643,9 @@ def select_texture_variant(
 
     try:
         run_uuid = UUID(run_id)
-        run = db.query(Run).filter(Run.id == run_uuid).first()
+        # Use with_for_update() to lock the row and prevent race conditions
+        # when multiple texture selections come in simultaneously
+        run = db.query(Run).filter(Run.id == run_uuid).with_for_update().first()
 
         if not run:
             logger.error(f"[select_texture_variant] Run {run_id} NOT FOUND")
