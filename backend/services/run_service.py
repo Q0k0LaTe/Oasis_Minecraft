@@ -799,8 +799,13 @@ def continue_build_after_texture_selection(run_id: str):
         mod_spec = ModSpec(**spec_data)
 
         # Write selected textures to the mod assets
+        # Path: generated/{job_id}/{mod_id}/src/main/resources/assets/{mod_id}/textures
         from pathlib import Path
-        assets_base = pipeline.workspace_dir / "src" / "main" / "resources" / "assets" / mod_ir_data.get("mod_id", "tutorialmod") / "textures"
+        mod_id = mod_ir_data.get("mod_id", "tutorialmod")
+        mod_workspace = pipeline.workspace_dir / mod_id
+        assets_base = mod_workspace / "src" / "main" / "resources" / "assets" / mod_id / "textures"
+
+        logger.info(f"[continue_build] Writing textures to: {assets_base}")
 
         for entity_id, selection in selected_textures.items():
             entity_type = selection.get("entity_type", "item")
@@ -810,22 +815,33 @@ def continue_build_after_texture_selection(run_id: str):
                 # Strip namespace prefix (e.g., "mymod:ruby" -> "ruby")
                 texture_name = entity_id.split(":")[-1] if ":" in entity_id else entity_id
 
-                # Determine texture path based on entity type
-                if entity_type == "block":
-                    texture_path = assets_base / "block" / f"{texture_name}.png"
-                else:
-                    texture_path = assets_base / "item" / f"{texture_name}.png"
-
-                texture_path.parent.mkdir(parents=True, exist_ok=True)
-
-                # Decode base64 and write texture
+                # Decode base64 texture data
                 if isinstance(texture_data, str):
                     texture_bytes = base64.b64decode(texture_data)
                 else:
                     texture_bytes = texture_data
 
-                texture_path.write_bytes(texture_bytes)
-                logger.info(f"[continue_build] Wrote texture for {entity_id} to {texture_path}")
+                # Write texture based on entity type
+                if entity_type == "block":
+                    # Blocks need textures in BOTH block/ and item/ folders
+                    # because blocks also have item forms in inventory
+                    block_texture_path = assets_base / "block" / f"{texture_name}.png"
+                    item_texture_path = assets_base / "item" / f"{texture_name}.png"
+
+                    block_texture_path.parent.mkdir(parents=True, exist_ok=True)
+                    item_texture_path.parent.mkdir(parents=True, exist_ok=True)
+
+                    block_texture_path.write_bytes(texture_bytes)
+                    item_texture_path.write_bytes(texture_bytes)
+
+                    logger.info(f"[continue_build] Wrote block texture for {entity_id} to {block_texture_path}")
+                    logger.info(f"[continue_build] Wrote block item texture for {entity_id} to {item_texture_path}")
+                else:
+                    # Items only need texture in item/ folder
+                    texture_path = assets_base / "item" / f"{texture_name}.png"
+                    texture_path.parent.mkdir(parents=True, exist_ok=True)
+                    texture_path.write_bytes(texture_bytes)
+                    logger.info(f"[continue_build] Wrote item texture for {entity_id} to {texture_path}")
 
         emit_event_sync(db, run.id, EventType.LOG_APPEND, {
             "message": "✓ Applied selected textures to mod",
