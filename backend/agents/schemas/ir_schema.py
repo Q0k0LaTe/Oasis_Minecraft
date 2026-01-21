@@ -57,11 +57,26 @@ class IRItem(BaseModel):
     item_id: str = Field(..., description="Registry ID (namespace:path format)")
     display_name: str = Field(..., description="English name for lang file")
     description: str = Field(..., description="Tooltip/lore")
+    
+    type: Optional[str] = Field(None, description="ITEM_MAINCLASS, ITEM_SUBCLASS, ITEM_NEWCLASS")
+
+    # for All:
+    maxCount: Optional[int] = Field(None, ge=1, le=64)
+    rarity: Optional[str] = Field(None, description="COMMON, UNCOMMON, RARE, EPIC")
+    fireproof: Optional[bool] = Field(None, description="True if lava/fire safe")
+    
+    # for ITEM_MAINCLASS:
+
+    # for ITEM_SUBCLASS:
+
+    # for ITEM_NEWCLASS:
+    # use: str = Field(..., description="Entire code for the method use")
+    # useOnBlock: str = Field(..., description="Entire code for the method useOnBlock")
+    # useOnEntity: str = Field(..., description="Entire code for the method useOnEntity")
+    
 
     # Properties (all required, no optionals)
     max_stack_size: int = Field(..., ge=1, le=64)
-    rarity: str = Field(..., description="COMMON, UNCOMMON, RARE, EPIC")
-    fireproof: bool = Field(...)
     creative_tab: str = Field(..., description="Creative tab constant name")
     special_ability: str = Field("", description="Empty if no special ability")
 
