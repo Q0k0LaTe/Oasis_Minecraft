@@ -49,6 +49,7 @@ def generate_java_code(
         import org.slf4j.LoggerFactory;
         import {package_name}.item.ModItems;
         import {package_name}.block.ModBlocks;
+        import {package_name}.item.ModItemGroups;
 
         public class {main_class_name} implements ModInitializer {{
         \tpublic static final String MOD_ID = "{mod_id}";
@@ -58,6 +59,7 @@ def generate_java_code(
         \tpublic void onInitialize() {{
         \t\tModItems.registerModItems();
         \t\tModBlocks.registerModBlocks();
+        \t\tModItemGroups.registerModItemGroups();
         \t\tLOGGER.info("Loaded {{}} mod!", MOD_ID);
         \t}}
         }}
@@ -87,12 +89,16 @@ def generate_java_code(
     # Generate ModBlocks class
     blocks_class_path = _generate_mod_blocks_class(java_path, package_name, mod_id, main_class_name, blocks)
 
+    # Generate ModItemGroups class
+    item_groups_class_path = _generate_mod_item_groups_class(java_path, package_name, mod_id, main_class_name, items, blocks)
+
     return {
         "status": "success",
         "main_class_path": str(main_class_path),
         "client_class_path": str(client_class_path),
         "items_class_path": str(items_class_path),
-        "blocks_class_path": str(blocks_class_path)
+        "blocks_class_path": str(blocks_class_path),
+        "item_groups_class_path": str(item_groups_class_path)
     }
 
 
@@ -221,6 +227,75 @@ def _generate_mod_blocks_class(
     blocks_path.parent.mkdir(parents=True, exist_ok=True)
     blocks_path.write_text(blocks_class)
     return blocks_path
+
+
+def _generate_mod_item_groups_class(
+    java_path: Path,
+    package_name: str,
+    mod_id: str,
+    main_class_name: str,
+    items: List[Dict[str, Any]],
+    blocks: List[Dict[str, Any]]
+) -> Path:
+    """Generate ModItemGroups.java with item group registrations"""
+    group_id = f"{mod_id}_group"
+    group_const = f"{mod_id.upper()}_GROUP"
+
+    entries = []
+    for item in items:
+        registration_id = item.get("registration_id", "")
+        if registration_id:
+            entries.append(f"\t\t\t\tentries.add(ModItems.{registration_id});")
+    for block in blocks:
+        registration_id = block.get("registration_id", "")
+        if registration_id:
+            entries.append(f"\t\t\t\tentries.add(ModBlocks.{registration_id});")
+
+    if items:
+        icon_item = f"ModItems.{items[0].get('registration_id', '')}"
+    elif blocks:
+        icon_item = f"ModBlocks.{blocks[0].get('registration_id', '')}"
+    else:
+        icon_item = "Items.STONE"
+
+    entries_block = "\n".join(entries) if entries else "\t\t\t\t// No items or blocks to add"
+
+    item_groups_class = dedent(f"""\
+        package {package_name}.item;
+
+        import net.minecraft.item.ItemGroup;
+        import net.minecraft.item.ItemStack;
+        import net.minecraft.item.Items;
+        import net.minecraft.registry.Registries;
+        import net.minecraft.registry.Registry;
+        import net.minecraft.registry.RegistryKey;
+        import net.minecraft.registry.RegistryKeys;
+        import net.minecraft.text.Text;
+        import net.minecraft.util.Identifier;
+        import {package_name}.{main_class_name};
+        import {package_name}.block.ModBlocks;
+
+        public class ModItemGroups {{
+        \tprivate static RegistryKey<ItemGroup> register(String id) {{
+        \t\treturn RegistryKey.of(RegistryKeys.ITEM_GROUP, Identifier.of({main_class_name}.MOD_ID, id));
+        \t}}
+        \tpublic static void registerModItemGroups() {{
+        \t\tRegistry.register(Registries.ITEM_GROUP, {group_const},
+        \t\t\t\tItemGroup.create(ItemGroup.Row.TOP, 7)
+        \t\t\t\t\t.displayName(Text.translatable("itemGroup.{group_id}"))
+        \t\t\t\t\t.icon(() -> new ItemStack({icon_item}))
+        \t\t\t\t\t.entries((displayContext, entries) -> {{
+        {entries_block}
+        \t\t\t\t\t}}).build());
+        \t\t{main_class_name}.LOGGER.info("Registering Mod Item Groups");
+        \t}}
+        \tpublic static final RegistryKey<ItemGroup> {group_const} = register("{group_id}");
+        }}
+        """)
+    item_groups_path = java_path / "item" / "ModItemGroups.java"
+    item_groups_path.parent.mkdir(parents=True, exist_ok=True)
+    item_groups_path.write_text(item_groups_class)
+    return item_groups_path
 
 
 def _to_class_name(mod_id: str) -> str:
