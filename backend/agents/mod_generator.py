@@ -689,7 +689,9 @@ public class ModBlocks {{
             (assets_dir / "models" / "item" / f"{block_id}.json").write_text(json.dumps(block_item_model, indent=2))
 
             block_texture_path = assets_dir / "textures" / "block" / f"{block_id}.png"
-            block_png = self.image_generator.generate_block_texture_from_spec(block_spec)
+            # Block generator returns list of variants - take first for single generation
+            block_png_list = self.image_generator.generate_block_texture_from_spec(block_spec, count=1)
+            block_png = block_png_list[0] if block_png_list else b''
 
             block_texture_path.write_bytes(block_png)
             block_texture_base64 = base64.b64encode(block_png).decode("utf-8")
@@ -718,7 +720,9 @@ public class ModBlocks {{
             (assets_dir / "models" / "item" / f"{tool_id}.json").write_text(json.dumps(handheld_model, indent=2))
 
             tool_texture_path = assets_dir / "textures" / "item" / f"{tool_id}.png"
-            tool_png = self.image_generator.generate_tool_texture(tool_spec)
+            # Tool generator returns list of variants - take first for single generation
+            tool_png_list = self.image_generator.generate_tool_texture(tool_spec, count=1)
+            tool_png = tool_png_list[0] if tool_png_list else b''
             tool_texture_path.write_bytes(tool_png)
             tool_texture_base64 = base64.b64encode(tool_png).decode("utf-8")
             self._write_tool_recipe(resources_root, mod_id, tool_spec, item_id)

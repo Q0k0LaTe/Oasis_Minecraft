@@ -10,6 +10,15 @@ These tools are invoked by the Executor to perform specific tasks:
 - etc.
 
 All tools are deterministic: same inputs → same outputs.
+
+IMAGE GENERATION ARCHITECTURE:
+=============================
+The image generation system uses specialized generators:
+- ItemImageGenerator: Items and tools (transparent backgrounds, sprites)
+- BlockImageGenerator: Blocks (opaque, seamless tileable textures)
+- ImageGenerator: Unified facade that delegates to specialized generators
+
+See ALGORITHM.md for detailed documentation of each algorithm.
 """
 from .workspace_tool import setup_workspace
 from .gradle_tool import generate_gradle_files
@@ -20,6 +29,8 @@ from .mixins_tool import generate_mixins_json
 from .gradle_wrapper_tool import setup_gradle_wrapper
 from .build_tool import build_mod
 from .image_generator import ImageGenerator
+from .item_image_generator import ItemImageGenerator
+from .block_image_generator import BlockImageGenerator
 from .reference_selector import ReferenceSelector
 from .tool_registry import ToolRegistry, create_tool_registry
 
@@ -33,6 +44,8 @@ __all__ = [
     "setup_gradle_wrapper",
     "build_mod",
     "ImageGenerator",
+    "ItemImageGenerator",
+    "BlockImageGenerator",
     "ReferenceSelector",
     "ToolRegistry",
     "create_tool_registry",

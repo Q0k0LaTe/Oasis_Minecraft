@@ -100,10 +100,11 @@ class ToolRegistry:
         )
 
         # Texture generation (AI-powered)
+        # Routes to ItemImageGenerator for items/tools, BlockImageGenerator for blocks
         self._registry["generate_texture"] = self._wrap_tool(
             self._generate_texture_wrapper,
             description="Generate pixel art texture using AI",
-            inputs=["item_name", "description", "variant_count"],
+            inputs=["item_name", "description", "variant_count", "entity_type", "material", "luminance", "gameplay_role"],
             outputs=["texture_variants"]
         )
 
@@ -153,17 +154,40 @@ class ToolRegistry:
         return wrapper
 
     def _generate_texture_wrapper(self, **kwargs):
-        """Wrapper for image generator"""
+        """
+        Wrapper for image generator - routes to appropriate generator based on entity type.
+
+        For items/tools: Uses ItemImageGenerator (transparent backgrounds, sprites)
+        For blocks: Uses BlockImageGenerator (opaque, seamless tileable textures)
+        """
         item_name = kwargs.get("item_name")
         description = kwargs.get("description")
         variant_count = kwargs.get("variant_count", 5)
+        entity_type = kwargs.get("entity_type", "item")
 
-        # Generate textures
-        variants = self.image_generator.generate_item_texture(
-            item_name=item_name,
-            item_description=description or item_name,
-            count=variant_count
-        )
+        # Route to appropriate generator based on entity type
+        if entity_type == "block":
+            # Use NEW block generation algorithm for blocks
+            block_spec = {
+                "blockName": item_name,
+                "description": description or item_name,
+                "gameplayRole": kwargs.get("gameplay_role", ""),
+                "properties": {
+                    "material": kwargs.get("material", "STONE"),
+                    "luminance": kwargs.get("luminance", 0)
+                }
+            }
+            variants = self.image_generator.generate_block_texture_from_spec(
+                block_spec=block_spec,
+                count=variant_count
+            )
+        else:
+            # Use existing item/tool generation algorithm
+            variants = self.image_generator.generate_item_texture(
+                item_name=item_name,
+                item_description=description or item_name,
+                count=variant_count
+            )
 
         return {"texture_variants": variants}
 
