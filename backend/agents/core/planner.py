@@ -114,34 +114,85 @@ class Planner:
         )
 
     def _create_texture_generation_tasks(self, ir: ModIR) -> List[Task]:
-        """Create texture generation tasks (can run in parallel)"""
+        """
+        Create texture generation tasks (can run in parallel).
+
+        Routes to different generators based on entity type:
+        - Items/Tools: ItemImageGenerator (transparent backgrounds, sprites)
+        - Blocks: BlockImageGenerator (opaque, seamless tileable textures)
+        """
         tasks = []
 
-        # Collect all items/blocks/tools that need textures
-        entities = []
+        # Create tasks for items
         for item in ir.items:
-            entities.append(("item", item.display_name, item.item_id, item.description))
-        for block in ir.blocks:
-            entities.append(("block", block.display_name, block.block_id, block.description))
-        for tool in ir.tools:
-            entities.append(("tool", tool.display_name, tool.tool_id, tool.description))
-
-        for entity_type, name, entity_id, description in entities:
             task = Task(
                 task_id=self._next_task_id(),
-                description=f"Generate texture for {name}",
+                description=f"Generate texture for {item.display_name}",
                 task_type="generate_texture",
                 tool_calls=[
                     ToolCall(
                         tool_name="generate_texture",
                         parameters={
-                            "item_name": name,
-                            "description": description,
-                            "variant_count": 3
+                            "item_name": item.display_name,
+                            "description": item.description,
+                            "variant_count": 3,
+                            "entity_type": "item"
                         }
                     )
                 ],
-                inputs={"entity_id": entity_id, "entity_type": entity_type},
+                inputs={"entity_id": item.item_id, "entity_type": "item"},
+                expected_outputs={"texture_variants": []},
+                parallelizable=True,
+                priority=80
+            )
+            tasks.append(task)
+
+        # Create tasks for blocks (uses NEW BlockImageGenerator algorithm)
+        for block in ir.blocks:
+            task = Task(
+                task_id=self._next_task_id(),
+                description=f"Generate texture for {block.display_name}",
+                task_type="generate_texture",
+                tool_calls=[
+                    ToolCall(
+                        tool_name="generate_texture",
+                        parameters={
+                            "item_name": block.display_name,
+                            "description": block.description,
+                            "variant_count": 3,
+                            "entity_type": "block",
+                            # Block-specific parameters for the new algorithm
+                            "material": block.material,
+                            "luminance": block.luminance,
+                            "gameplay_role": block.description
+                        }
+                    )
+                ],
+                inputs={"entity_id": block.block_id, "entity_type": "block"},
+                expected_outputs={"texture_variants": []},
+                parallelizable=True,
+                priority=80
+            )
+            tasks.append(task)
+
+        # Create tasks for tools
+        for tool in ir.tools:
+            task = Task(
+                task_id=self._next_task_id(),
+                description=f"Generate texture for {tool.display_name}",
+                task_type="generate_texture",
+                tool_calls=[
+                    ToolCall(
+                        tool_name="generate_texture",
+                        parameters={
+                            "item_name": tool.display_name,
+                            "description": tool.description,
+                            "variant_count": 3,
+                            "entity_type": "tool"
+                        }
+                    )
+                ],
+                inputs={"entity_id": tool.tool_id, "entity_type": "tool"},
                 expected_outputs={"texture_variants": []},
                 parallelizable=True,
                 priority=80
