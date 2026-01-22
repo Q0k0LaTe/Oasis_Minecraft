@@ -13,6 +13,10 @@ to keep the pipeline consistent and deterministic.
   - `ITEM_MAINCLASS`: uses base `Item` class directly.
   - `ITEM_SUBCLASS`: reserved for a future shared subclass strategy.
   - `ITEM_NEWCLASS`: generates a new Java class per item.
+- Added item behavior flags and stats in `IRItem`:
+  - `isFood`, `nutrition`, `saturationModifier`
+  - `isSword`, `swordAttackDamage`, `swordAttackSpeed`
+  - `isPickaxe`, `pickaxeAttackDamage`, `pickaxeAttackSpeed`
 - `IRItem.use`, `IRItem.useOnBlock`, `IRItem.useOnEntity` are now part of IR.
   - Each field must contain a complete overridden method body.
   - Strings are injected directly into the generated class.
@@ -62,6 +66,11 @@ to keep the pipeline consistent and deterministic.
   - For `ITEM_NEWCLASS`, it calls `_generate_new_item_class`.
   - The registration uses `new <CustomClass>(settings)` instead of `new Item(...)`.
   - Imports are added if the class is outside `{package}.item`.
+  - `isFood` now adds `FoodComponent` settings when true.
+  - `isSword`/`isPickaxe` now apply `.sword(...)`/`.pickaxe(...)` settings.
+  - Generates tag files for tool behavior:
+    - `data/minecraft/tags/item/swords.json`
+    - `data/minecraft/tags/item/pickaxes.json`
 - `_generate_new_item_class`:
   - Creates a Java class in the specified `java_package`.
   - Injects `use`, `useOnBlock`, and `useOnEntity` as-is if provided.
@@ -71,12 +80,16 @@ to keep the pipeline consistent and deterministic.
 - Orchestrator:
   - Must set `type` for every item to one of the three values.
   - Must populate the method strings for `ITEM_NEWCLASS`.
+  - Should set tool/food flags and related stats when the item is meant to act
+    as food or a tool (sword/pickaxe).
 - SpecManager:
   - Should validate and persist `type` + method bodies in the spec.
+  - Should validate `isFood`/`isSword`/`isPickaxe` are consistent with stats.
 - Compiler:
   - Must carry `type` + method strings into `IRItem`.
   - Should enforce that `ITEM_NEWCLASS` has at least one method body, unless the
     intent is to mirror `ITEM_MAINCLASS` behavior (all three empty).
+  - Must carry new tool/food flags and stats into the IR.
 
 ## Validation guidance
 - Prefer failing fast if `ITEM_NEWCLASS` has empty `use`, `useOnBlock`, and `useOnEntity`,
