@@ -6,6 +6,7 @@ This tool creates all Java source files for the mod (main class, items, blocks, 
 from pathlib import Path
 from typing import Dict, Any, List
 from textwrap import dedent
+import json
 
 
 def generate_java_code(
@@ -92,6 +93,8 @@ def generate_java_code(
     # Generate ModItemGroups class
     item_groups_class_path = _generate_mod_item_groups_class(java_path, package_name, mod_id, main_class_name, items, blocks)
 
+    _generate_tags_json(mod_dir, items)
+
     return {
         "status": "success",
         "main_class_path": str(main_class_path),
@@ -117,18 +120,33 @@ def _generate_mod_items_class(
 
     for item in items:
         item_id = item.get("item_id", "").split(":")[-1]  # Extract path from namespace:path
-        registration_id = item.get("registration_id", item_id.upper())
-        rarity = item.get("rarity", "COMMON")
-        fireproof = item.get("fireproof", False)
-        max_stack = item.get("max_stack_size", 64)
-        item_type = item.get("type", "ITEM_MAINCLASS")
+        registration_id = item.get("registration_id") or item_id.upper()
+        rarity = item.get("rarity") or "COMMON"
+        fireproof = item.get("fireproof") or False
+        isFood = item.get("isFood") or False
+        isSword = item.get("isSword") or False
+        isPickaxe = item.get("isPickaxe") or False
+        max_stack = item.get("max_stack_size") or 64
+        item_type = item.get("type") or "ITEM_MAINCLASS"
         class_name = ''.join(word.capitalize() for word in item_id.replace('_', '-').split('-'))
 
         item_declarations.append(f'\tpublic static Item {registration_id};')
 
-        settings = f"new Item.Settings().registryKey(RegistryKey.of(RegistryKeys.ITEM, Identifier.of({main_class_name}.MOD_ID, \"{item_id}\"))).maxCount({max_stack})"
+        settings = f"new Item.Settings().registryKey(RegistryKey.of(RegistryKeys.ITEM, Identifier.of({main_class_name}.MOD_ID, \"{item_id}\"))).maxCount({max_stack}).rarity(Rarity.{rarity})"
         if fireproof:
             settings += ".fireproof()"
+        if isFood:
+            nutrition = item.get("nutrition") or 5
+            saturationModifier = item.get("saturationModifier") or 0.6
+            settings += f".food(new FoodComponent.Builder().nutrition({nutrition}).saturationModifier({saturationModifier}f).build())"
+        if isSword:
+            swordAttackDamage = item.get("swordAttackDamage") or 3.0
+            swordAttackSpeed = item.get("swordAttackSpeed") or -2.4
+            settings += f".sword(ToolMaterial.DIAMOND, {swordAttackDamage}F, {swordAttackSpeed}F)"
+        if isPickaxe:
+            pickaxeAttackDamage = item.get("pickaxeAttackDamage") or 1.0
+            pickaxeAttackSpeed = item.get("pickaxeAttackSpeed") or -2.8
+            settings += f".pickaxe(ToolMaterial.DIAMOND, {pickaxeAttackDamage}F, {pickaxeAttackSpeed}F)"
 
         if item_type == "ITEM_NEWCLASS":
             _generate_new_item_class(java_path, package_name, main_class_name, item)
@@ -146,12 +164,15 @@ def _generate_mod_items_class(
     items_class = dedent(f"""\
         package {package_name}.item;
 
-        import net.minecraft.item.Item;
+        import net.minecraft.item.*;
         import net.minecraft.registry.Registries;
         import net.minecraft.registry.Registry;
         import net.minecraft.registry.RegistryKey;
         import net.minecraft.registry.RegistryKeys;
         import net.minecraft.util.Identifier;
+        import net.minecraft.util.Rarity;
+        import net.minecraft.registry.tag.*;
+
         import {package_name}.{main_class_name};
 
         public class ModItems {{
@@ -189,9 +210,9 @@ def _generate_new_item_class(
         lines = code.strip().splitlines()
         return "\n".join(f"\t{line}" for line in lines)
 
-    use_on_block = _indent_block(item.get("useOnBlock", ""))
-    use = _indent_block(item.get("use", ""))
-    use_on_entity = _indent_block(item.get("useOnEntity", ""))
+    use_on_block = _indent_block(item.get("useOnBlock") or "")
+    use = _indent_block(item.get("use") or "")
+    use_on_entity = _indent_block(item.get("useOnEntity") or "")
 
     custom_methods = "\n\n".join(block for block in [use_on_block, use, use_on_entity] if block)
 
@@ -251,10 +272,10 @@ def _generate_mod_blocks_class(
 
     for block in blocks:
         block_id = block.get("block_id", "").split(":")[-1]
-        registration_id = block.get("registration_id", block_id.upper())
-        hardness = block.get("hardness", 3.0)
-        resistance = block.get("resistance", 3.0)
-        requires_tool = block.get("requires_tool", True)
+        registration_id = block.get("registration_id") or block_id.upper()
+        hardness = block.get("hardness") or 3.0
+        resistance = block.get("resistance") or 3.0
+        requires_tool = block.get("requires_tool") or True
 
         block_declarations.append(f'\tpublic static Block {registration_id};')
 
@@ -318,11 +339,11 @@ def _generate_mod_item_groups_class(
 
     entries = []
     for item in items:
-        registration_id = item.get("registration_id", "")
+        registration_id = item.get("registration_id") or ""
         if registration_id:
             entries.append(f"\t\t\t\tentries.add(ModItems.{registration_id});")
     for block in blocks:
-        registration_id = block.get("registration_id", "")
+        registration_id = block.get("registration_id") or ""
         if registration_id:
             entries.append(f"\t\t\t\tentries.add(ModBlocks.{registration_id});")
 
@@ -371,6 +392,33 @@ def _generate_mod_item_groups_class(
     item_groups_path.parent.mkdir(parents=True, exist_ok=True)
     item_groups_path.write_text(item_groups_class)
     return item_groups_path
+
+
+def _generate_tags_json(mod_dir: Path, items: List[Dict[str, Any]]) -> Path:
+    sword_values = []
+    pickaxe_values = []
+    for item in items:
+        isSword = item.get("isSword") or False
+        if isSword:
+            item_id = item.get("item_id")
+            if item_id:
+                sword_values.append(item_id)
+        isPickaxe = item.get("isPickaxe") or False
+        if isPickaxe:
+            item_id = item.get("item_id")
+            if item_id:
+                pickaxe_values.append(item_id)
+
+    sword_json = json.dumps({"values": sword_values}, indent=2)
+    sword_path = mod_dir / "src" / "main" / "resources" / "data" / "minecraft" / "tags" / "item" / "swords.json"
+    sword_path.parent.mkdir(parents=True, exist_ok=True)
+    sword_path.write_text(sword_json)
+
+    pickaxes_json = json.dumps({"values": pickaxe_values}, indent=2)
+    pickaxes_path = mod_dir / "src" / "main" / "resources" / "data" / "minecraft" / "tags" / "item" / "pickaxes.json"
+    pickaxes_path.parent.mkdir(parents=True, exist_ok=True)
+    pickaxes_path.write_text(pickaxes_json)
+    return mod_dir / "src" / "main" / "resources" / "data" / "minecraft" / "tags" / "item"
 
 
 def _to_class_name(mod_id: str) -> str:

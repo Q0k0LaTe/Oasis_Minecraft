@@ -66,6 +66,16 @@ class IRItem(BaseModel):
     fireproof: Optional[bool] = Field(None, description="True if lava/fire safe")
     
     # for ITEM_MAINCLASS:
+    # here the material used for every tool and armor could only be diamond. Material feature to be added
+    isFood: Optional[bool] = Field(None, description="True if the item is a food")
+    nutrition: Optional[int] = Field(None, description="The number of half chicken thighs gained")
+    saturationModifier: Optional[float] = Field(None, description="The number of saturation value get divided by 2 * nutrition")
+    isSword: Optional[bool] = Field(None, description="True if the item is a sword")
+    swordAttackDamage: Optional[float] = Field(None, description="The attack damage of the sword")
+    swordAttackSpeed: Optional[float] = Field(None, description="The attack speed of the sword")
+    isPickaxe: Optional[bool] = Field(None, description="True if the item is a pickaxe")
+    pickaxeAttackDamage: Optional[float] = Field(None, description="The attack damage of the pickaxe")
+    pickaxeAttackSpeed: Optional[float] = Field(None, description="The attack speed of the pickaxe")
 
     # for ITEM_SUBCLASS:
 
