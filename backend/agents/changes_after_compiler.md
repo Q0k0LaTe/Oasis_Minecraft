@@ -20,38 +20,38 @@ to keep the pipeline consistent and deterministic.
     - `use`:
       ```java
       @Override
-          public ActionResult use(World world, PlayerEntity player, Hand hand){
-              if (!world.isClient()) {
-                  // actual code
-                  return ActionResult.SUCCESS;
-              }
-              return super.use(world, player, hand);
+      public ActionResult use(World world, PlayerEntity player, Hand hand){
+          if (!world.isClient()) {
+              // actual code
+              return ActionResult.SUCCESS;
           }
+          return super.use(world, player, hand);
+      }
       ```
     - `useOnBlock`:
       ```java
       @Override
-          public ActionResult useOnBlock(ItemUsageContext context) {
-              BlockPos pos = context.getBlockPos();
-              PlayerEntity player = context.getPlayer();
-              World world = context.getWorld();
-              if (!world.isClient()) {
-                  // actual code
-                  return ActionResult.SUCCESS;
-              }
-              return super.useOnBlock(context);
+      public ActionResult useOnBlock(ItemUsageContext context) {
+          BlockPos pos = context.getBlockPos();
+          PlayerEntity player = context.getPlayer();
+          World world = context.getWorld();
+          if (!world.isClient()) {
+              // actual code
+              return ActionResult.SUCCESS;
           }
+          return super.useOnBlock(context);
+      }
       ```
     - `useOnEntity`:
       ```java
       @Override
       public ActionResult useOnEntity(ItemStack stack, PlayerEntity user, LivingEntity entity, Hand hand) {
-              if (true) { // some conditions on the entity
-                  // actual code
-                  return ActionResult.SUCCESS;
-              }
-              return ActionResult.PASS;
+          if (true) { // some conditions on the entity
+              // actual code
+              return ActionResult.SUCCESS;
           }
+          return ActionResult.PASS;
+      }
       ```
   - It is compilable and buildable, but not recommended, for all three fields to be empty strings. In that case the
     generated class behaves the same as `ITEM_MAINCLASS`.
