@@ -70,9 +70,9 @@ class IRItem(BaseModel):
     # for ITEM_SUBCLASS:
 
     # for ITEM_NEWCLASS:
-    # use: str = Field(..., description="Entire code for the method use")
-    # useOnBlock: str = Field(..., description="Entire code for the method useOnBlock")
-    # useOnEntity: str = Field(..., description="Entire code for the method useOnEntity")
+    use: Optional[str] = Field(None, description="Entire code for the method use")
+    useOnBlock: Optional[str] = Field(None, description="Entire code for the method useOnBlock")
+    useOnEntity: Optional[str] = Field(None, description="Entire code for the method useOnEntity")
     
 
     # Properties (all required, no optionals)

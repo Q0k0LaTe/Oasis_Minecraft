@@ -50,7 +50,7 @@ class ImageGenerator:
         self,
         item_description: str,
         item_name: str,
-        max_refs: int = 1,
+        max_refs: int = 3,
         for_block: bool = False
     ) -> List[Path]:
         """
