@@ -121,6 +121,8 @@ def _generate_mod_items_class(
         rarity = item.get("rarity", "COMMON")
         fireproof = item.get("fireproof", False)
         max_stack = item.get("max_stack_size", 64)
+        item_type = item.get("type", "ITEM_MAINCLASS")
+        class_name = ''.join(word.capitalize() for word in item_id.replace('_', '-').split('-'))
 
         item_declarations.append(f'\tpublic static Item {registration_id};')
 
@@ -128,10 +130,16 @@ def _generate_mod_items_class(
         if fireproof:
             settings += ".fireproof()"
 
+        if item_type == "ITEM_NEWCLASS":
+            _generate_new_item_class(java_path, package_name, main_class_name, item)
+            item_class = class_name
+        else:
+            item_class = "Item"
+
         item_registrations.append(
             f'\t\t{registration_id} = Registry.register(Registries.ITEM, '
             f'Identifier.of({main_class_name}.MOD_ID, "{item_id}"), '
-            f'new Item({settings}));'
+            f'new {item_class}({settings}));'
         )
 
     # Generate class
@@ -158,6 +166,73 @@ def _generate_mod_items_class(
     items_path.parent.mkdir(parents=True, exist_ok=True)
     items_path.write_text(items_class)
     return items_path
+
+
+def _generate_new_item_class(
+    java_path: Path,
+    package_name: str,
+    main_class_name: str,
+    item: Dict[str, Any]
+) -> Path:
+    """Generate a custom Item subclass for ITEM_NEWCLASS entries"""
+    item_id = item.get("item_id", "").split(":")[-1]
+    class_name = ''.join(word.capitalize() for word in item_id.replace('_', '-').split('-'))
+    item_package = item.get("java_package") or f"{package_name}.item"
+
+    base_src = java_path
+    for _ in package_name.split("."):
+        base_src = base_src.parent
+
+    def _indent_block(code: str) -> str:
+        if not code:
+            return ""
+        lines = code.strip().splitlines()
+        return "\n".join(f"\t{line}" for line in lines)
+
+    use_on_block = _indent_block(item.get("useOnBlock", ""))
+    use = _indent_block(item.get("use", ""))
+    use_on_entity = _indent_block(item.get("useOnEntity", ""))
+
+    custom_methods = "\n\n".join(block for block in [use_on_block, use, use_on_entity] if block)
+
+    new_item_class = dedent(f"""\
+        package {item_package};
+
+        import {package_name}.block.ModBlocks;
+        import {package_name}.item.ModItems;
+        import net.minecraft.block.BlockState;
+        import net.minecraft.block.Blocks;
+        import net.minecraft.client.gui.screen.Screen;
+        import net.minecraft.entity.EquipmentSlot;
+        import net.minecraft.entity.LivingEntity;
+        import net.minecraft.entity.player.PlayerEntity;
+        import net.minecraft.item.Item;
+        import net.minecraft.item.ItemStack;
+        import net.minecraft.item.ItemUsageContext;
+        import net.minecraft.server.world.ServerWorld;
+        import net.minecraft.sound.SoundCategory;
+        import net.minecraft.text.Text;
+        import net.minecraft.util.ActionResult;
+        import net.minecraft.util.Hand;
+        import net.minecraft.util.math.BlockPos;
+        import net.minecraft.world.World;
+
+        import java.util.Objects;
+
+        import static net.minecraft.text.Text.*;
+
+        public class {class_name} extends Item {{
+        \tpublic {class_name}(Settings settings) {{
+        \t\tsuper(settings);
+        \t}}
+
+        {custom_methods}
+        }}
+        """)
+    new_item_path = base_src / item_package.replace(".", "/") / f"{class_name}.java"
+    new_item_path.parent.mkdir(parents=True, exist_ok=True)
+    new_item_path.write_text(new_item_class)
+    return new_item_path
 
 
 def _generate_mod_blocks_class(
