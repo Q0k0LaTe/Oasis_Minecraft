@@ -30,7 +30,7 @@ from config import (
 )
 from agents.schemas import (
     ModSpec, ModIR,
-    ItemSpec, IRItem, IRAsset,
+    ItemSpec, ItemType, IRItem, IRAsset,
     BlockSpec, IRBlock,
     ToolSpec, IRTool,
     IRRecipe
@@ -154,6 +154,16 @@ class Compiler:
         java_class_name = self._to_pascal_case(item_id) + "Item"
         registration_id = self._to_screaming_snake_case(item_id)
 
+        item_type = self._infer_item_type(item)
+
+        use_method = item.use
+        use_on_block_method = item.useOnBlock
+        use_on_entity_method = item.useOnEntity
+        if item_type == ItemType.ITEM_NEWCLASS and not any(
+            self._has_method_body(m) for m in [use_method, use_on_block_method, use_on_entity_method]
+        ):
+            use_method = self._default_use_stub()
+
         # Create texture asset
         texture_asset = IRAsset(
             asset_type="texture",
@@ -188,9 +198,23 @@ class Compiler:
             item_id=full_item_id,
             display_name=item.item_name,
             description=item.description,
+            type=item_type.value,
+            maxCount=item.max_stack_size or 64,
             max_stack_size=item.max_stack_size or 64,
             rarity=item.rarity.value if item.rarity else "COMMON",
             fireproof=item.fireproof or False,
+            isFood=bool(item.isFood),
+            nutrition=item.nutrition,
+            saturationModifier=item.saturationModifier,
+            isSword=bool(item.isSword),
+            swordAttackDamage=item.swordAttackDamage,
+            swordAttackSpeed=item.swordAttackSpeed,
+            isPickaxe=bool(item.isPickaxe),
+            pickaxeAttackDamage=item.pickaxeAttackDamage,
+            pickaxeAttackSpeed=item.pickaxeAttackSpeed,
+            use=use_method or "",
+            useOnBlock=use_on_block_method or "",
+            useOnEntity=use_on_entity_method or "",
             creative_tab=item.creative_tab.value if item.creative_tab else "MISC",
             special_ability=item.special_ability or "",
             texture_asset=texture_asset,
@@ -397,6 +421,53 @@ class Compiler:
 
     # === Helper Methods ===
 
+    def _infer_item_type(self, item: ItemSpec) -> ItemType:
+        """Decide item implementation type based on flags, methods, and name."""
+        name_tokens = self._tokenize_name(item.item_name)
+        has_methods = any(self._has_method_body(m) for m in [item.use, item.useOnBlock, item.useOnEntity])
+        has_special = bool(item.special_ability)
+
+        is_food = bool(item.isFood)
+        is_sword = bool(item.isSword) or ("sword" in name_tokens)
+        is_pickaxe = bool(item.isPickaxe) or ("pickaxe" in name_tokens)
+        is_axe = "axe" in name_tokens and "pickaxe" not in name_tokens
+        is_hoe = "hoe" in name_tokens
+        is_shovel = "shovel" in name_tokens or "spade" in name_tokens
+        has_functionality = has_methods or is_food or is_sword or is_pickaxe or has_special
+
+        if item.type == ItemType.ITEM_SUBCLASS:
+            return ItemType.ITEM_SUBCLASS
+        if has_methods:
+            return ItemType.ITEM_NEWCLASS
+        if is_pickaxe or is_sword or is_food:
+            return ItemType.ITEM_MAINCLASS
+        if not has_functionality and not (is_axe or is_hoe or is_shovel):
+            return ItemType.ITEM_MAINCLASS
+        if is_axe or is_hoe or is_shovel:
+            return ItemType.ITEM_NEWCLASS
+        return ItemType.ITEM_NEWCLASS
+
+    @staticmethod
+    def _tokenize_name(name: str) -> List[str]:
+        return [tok for tok in re.split(r"[^a-z0-9]+", name.lower()) if tok]
+
+    @staticmethod
+    def _has_method_body(val: Any) -> bool:
+        return isinstance(val, str) and val.strip() != ""
+
+    @staticmethod
+    def _default_use_stub() -> str:
+        return (
+            "@Override\n"
+            "public ActionResult use(World world, PlayerEntity player, Hand hand){\n"
+            "    if (!world.isClient()) {\n"
+            "        // TODO: implement custom behavior\n"
+            "        return ActionResult.SUCCESS;\n"
+            "    }\n"
+            "    return super.use(world, player, hand);\n"
+            "}\n"
+        )
+
     def _generate_mod_id(self, mod_name: str) -> str:
         """Generate mod_id from mod_name"""
         # Convert to lowercase, replace spaces with underscores, remove special chars
@@ -468,6 +539,21 @@ class Compiler:
             if item.item_id in all_ids:
                 raise CompilationError(f"Duplicate registry ID: {item.item_id}")
             all_ids.add(item.item_id)
+            item_type = item.type or "ITEM_MAINCLASS"
+            if item_type == "ITEM_NEWCLASS":
+                if not any(self._has_method_body(m) for m in [item.use, item.useOnBlock, item.useOnEntity]):
+                    raise CompilationError(f"ITEM_NEWCLASS item '{item.item_id}' is missing method bodies")
+            if item.isFood:
+                if item.nutrition is None or item.saturationModifier is None:
+                    raise CompilationError(f"isFood set but nutrition/saturationModifier missing for '{item.item_id}'")
+            if item.isSword:
+                if item.swordAttackDamage is None or item.swordAttackSpeed is None:
+                    raise CompilationError(f"isSword set but sword stats missing for '{item.item_id}'")
+            if item.isPickaxe:
+                if item.pickaxeAttackDamage is None or item.pickaxeAttackSpeed is None:
+                    raise CompilationError(f"isPickaxe set but pickaxe stats missing for '{item.item_id}'")
+            if item_type == "ITEM_SUBCLASS":
+                print(f"⚠ Warning: ITEM_SUBCLASS used for '{item.item_id}' but subclass generation is not implemented")
 
         # All checks passed
         print(f"✓ IR validation passed: {len(ir.items)} items, {len(ir.blocks)} blocks, {len(ir.tools)} tools")
