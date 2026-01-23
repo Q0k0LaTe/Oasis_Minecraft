@@ -60,6 +60,25 @@ export default function ApprovalDialog({
     }
   };
 
+  // Format path for display - show name for remove operations, or friendly path for others
+  const formatPath = (delta) => {
+    const op = delta.operation?.toLowerCase();
+
+    // For remove operations, show the item name if available
+    if ((op === 'remove' || op === 'delete') && delta.value?.name) {
+      return delta.value.name;
+    }
+
+    // For add operations, try to get name from value
+    if (op === 'add' && delta.value) {
+      const name = delta.value.item_name || delta.value.block_name || delta.value.tool_name;
+      if (name) return name;
+    }
+
+    // Fallback to path
+    return delta.path || 'spec';
+  };
+
   const deltasCount = deltas?.length || 0;
 
   return (
@@ -85,10 +104,10 @@ export default function ApprovalDialog({
                     <div className="delta-header">
                       <span className="delta-icon">{getOperationIcon(delta.operation)}</span>
                       <span className="delta-operation">{delta.operation || 'change'}</span>
-                      <span className="delta-path">{delta.path || 'spec'}</span>
+                      <span className="delta-path">{formatPath(delta)}</span>
                     </div>
-                    
-                    {delta.value !== undefined && (
+
+                    {delta.value !== undefined && delta.operation?.toLowerCase() !== 'remove' && (
                       <div className="delta-value">
                         <pre>{JSON.stringify(delta.value, null, 2)}</pre>
                       </div>

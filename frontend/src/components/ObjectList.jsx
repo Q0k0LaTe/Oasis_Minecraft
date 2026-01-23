@@ -9,6 +9,7 @@ export default function ObjectList({
   spec,
   selectedObject,
   onSelectObject,
+  onDeleteObject,
   onExport,
   onBuild,
   isBuildRunning,
@@ -37,6 +38,7 @@ export default function ObjectList({
           type="block"
           selectedObject={selectedObject}
           onSelect={onSelectObject}
+          onDelete={onDeleteObject}
           emptyText="No blocks defined"
         />
 
@@ -47,6 +49,7 @@ export default function ObjectList({
           type="item"
           selectedObject={selectedObject}
           onSelect={onSelectObject}
+          onDelete={onDeleteObject}
           emptyText="No items defined"
         />
 
@@ -57,6 +60,7 @@ export default function ObjectList({
           type="structure"
           selectedObject={selectedObject}
           onSelect={onSelectObject}
+          onDelete={onDeleteObject}
           emptyText="No structures defined"
         />
 
@@ -98,6 +102,7 @@ function ObjectSection({
   type,
   selectedObject,
   onSelect,
+  onDelete,
   emptyText,
 }) {
   const [isExpanded, setIsExpanded] = React.useState(true);
@@ -113,6 +118,13 @@ function ObjectSection({
   const isSelected = (obj) => {
     if (!selectedObject) return false;
     return getObjectId(obj) === getObjectId(selectedObject);
+  };
+
+  const handleDelete = (e, obj, index) => {
+    e.stopPropagation();
+    if (onDelete) {
+      onDelete(obj, type, index);
+    }
   };
 
   return (
@@ -145,6 +157,13 @@ function ObjectSection({
                     {obj.rarity}
                   </span>
                 )}
+                <button
+                  className="btn-delete"
+                  onClick={(e) => handleDelete(e, obj, index)}
+                  title="Delete"
+                >
+                  <span className="delete-icon">X</span>
+                </button>
               </div>
             ))
           )}
