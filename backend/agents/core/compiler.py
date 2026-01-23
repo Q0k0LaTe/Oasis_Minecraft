@@ -78,14 +78,17 @@ class Compiler:
         # Compile all blocks
         ir_blocks = [self._compile_block(block, mod_id, base_package) for block in spec.blocks]
 
-        # Compile all tools
-        ir_tools = [self._compile_tool(tool, mod_id, base_package) for tool in spec.tools]
-
-        # Generate recipes for tools
+        # Compile tools as items (tools are item subclasses in Minecraft)
         ir_recipes = []
-        for tool in ir_tools:
-            recipe = self._generate_tool_recipe(tool, mod_id)
+        for tool in spec.tools:
+            tool_item = self._compile_tool_as_item(tool, mod_id, base_package)
+            ir_items.append(tool_item)
+            # Generate recipe for tool
+            recipe = self._generate_tool_item_recipe(tool_item, tool.tool_type, mod_id)
             ir_recipes.append(recipe)
+
+        # Keep ir_tools empty - tools are now in ir_items
+        ir_tools = []
 
         # Collect all assets
         assets = []
@@ -100,8 +103,6 @@ class Compiler:
                 block.loot_table_asset,
                 block.lang_asset
             ])
-        for tool in ir_tools:
-            assets.extend([tool.texture_asset, tool.model_asset, tool.lang_asset, tool.recipe_asset])
 
         # Create complete IR
         ir = ModIR(
@@ -322,6 +323,114 @@ class Compiler:
             java_class_name=java_class_name,
             java_package=f"{base_package}.blocks",
             registration_id=registration_id
+        )
+
+    def _compile_tool_as_item(self, tool: ToolSpec, mod_id: str, base_package: str) -> IRItem:
+        """Compile ToolSpec into IRItem with appropriate tool flags (isSword, isPickaxe, etc.)"""
+        tool_id = tool.tool_id or self._generate_registry_id(tool.tool_name)
+        full_tool_id = f"{mod_id}:{tool_id}"
+
+        java_class_name = self._to_pascal_case(tool_id) + "Item"
+        registration_id = self._to_screaming_snake_case(tool_id)
+
+        # Get tier defaults
+        tier_defaults = self._get_tool_tier_defaults(tool.material_tier or "IRON")
+
+        # Determine tool type flags and stats
+        tool_type = (tool.tool_type or "").upper()
+        is_sword = tool_type == "SWORD"
+        is_pickaxe = tool_type == "PICKAXE"
+
+        # Attack stats based on tool type
+        attack_damage = tool.attack_damage or tier_defaults["attack_damage"]
+        # Sword attack speed is typically -2.4, pickaxe is -2.8
+        attack_speed = -2.4 if is_sword else -2.8
+
+        # Create assets (use handheld model for tools)
+        texture_asset = IRAsset(
+            asset_type="texture",
+            file_path=f"assets/{mod_id}/textures/item/{tool_id}.png",
+            texture_generation_prompt=self._create_texture_prompt(tool.tool_name, tool.description, tool.texture_description),
+            texture_reference_ids=tool.texture_references or []
+        )
+
+        model_asset = IRAsset(
+            asset_type="model",
+            file_path=f"assets/{mod_id}/models/item/{tool_id}.json",
+            json_content={
+                "parent": "item/handheld",
+                "textures": {
+                    "layer0": f"{mod_id}:item/{tool_id}"
+                }
+            }
+        )
+
+        lang_asset = IRAsset(
+            asset_type="lang",
+            file_path=f"assets/{mod_id}/lang/en_us.json",
+            lang_entries={
+                f"item.{mod_id}.{tool_id}": tool.tool_name
+            }
+        )
+
+        return IRItem(
+            item_id=full_tool_id,
+            display_name=tool.tool_name,
+            description=tool.description,
+            type="ITEM_MAINCLASS",
+            maxCount=1,  # Tools stack to 1
+            max_stack_size=1,
+            rarity=tool.rarity.value if tool.rarity else "COMMON",
+            fireproof=tool.fireproof or False,
+            isFood=False,
+            nutrition=None,
+            saturationModifier=None,
+            isSword=is_sword,
+            swordAttackDamage=attack_damage if is_sword else None,
+            swordAttackSpeed=attack_speed if is_sword else None,
+            isPickaxe=is_pickaxe,
+            pickaxeAttackDamage=attack_damage if is_pickaxe else None,
+            pickaxeAttackSpeed=attack_speed if is_pickaxe else None,
+            use="",
+            useOnBlock="",
+            useOnEntity="",
+            creative_tab=tool.creative_tab.value if tool.creative_tab else "TOOLS",
+            special_ability="",
+            texture_asset=texture_asset,
+            model_asset=model_asset,
+            lang_asset=lang_asset,
+            java_class_name=java_class_name,
+            java_package=f"{base_package}.items",
+            registration_id=registration_id
+        )
+
+    def _generate_tool_item_recipe(self, item: IRItem, tool_type: str, mod_id: str) -> IRRecipe:
+        """Generate crafting recipe for a tool item"""
+        tool_type = (tool_type or "PICKAXE").upper()
+
+        # Default patterns
+        patterns = {
+            "PICKAXE": (["###", " S ", " S "], {"#": "material", "S": "minecraft:stick"}),
+            "AXE": (["##", "#S", " S"], {"#": "material", "S": "minecraft:stick"}),
+            "SWORD": (["#", "#", "S"], {"#": "material", "S": "minecraft:stick"}),
+            "SHOVEL": (["#", "S", "S"], {"#": "material", "S": "minecraft:stick"}),
+            "HOE": (["##", " S", " S"], {"#": "material", "S": "minecraft:stick"})
+        }
+
+        pattern, keys = patterns.get(tool_type, patterns["PICKAXE"])
+
+        # TODO: Get crafting ingredient from tool spec
+        keys["#"] = "minecraft:iron_ingot"
+
+        recipe_id = item.item_id.split(":")[1]
+
+        return IRRecipe(
+            recipe_id=f"{mod_id}:{recipe_id}_recipe",
+            recipe_type="crafting_shaped",
+            result_item_id=item.item_id,
+            result_count=1,
+            pattern=pattern,
+            keys=keys
         )
 
     def _compile_tool(self, tool: ToolSpec, mod_id: str, base_package: str) -> IRTool:
