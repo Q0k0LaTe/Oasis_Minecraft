@@ -25,6 +25,8 @@ services:
     volumes:
       - ./backend/generated:/app/generated
       - ./backend/downloads:/app/downloads
+      - ./backend/agents:/app/agents  # Mount source for live updates
+      - ./backend/services:/app/services  # Mount source for live updates
     restart: unless-stopped
 
   postgres:

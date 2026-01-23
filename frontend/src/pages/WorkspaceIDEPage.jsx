@@ -210,6 +210,36 @@ export default function WorkspaceIDEPage() {
     return result;
   }, [updateSpec]);
 
+  // Handle object deletion from ObjectList
+  const handleDeleteObject = useCallback(async (obj, type, index) => {
+    const name = obj.item_name || obj.block_name || obj.tool_name || 'this object';
+    if (!window.confirm(`Delete "${name}"?`)) return;
+
+    // Map type to spec array name
+    const pathMap = { block: 'blocks', item: 'items', structure: 'tools' };
+    const arrayName = pathMap[type];
+
+    if (!spec || !arrayName) return;
+
+    // Create a copy of the spec with the item removed
+    const newSpec = { ...spec };
+    const currentArray = newSpec[arrayName] || [];
+    newSpec[arrayName] = currentArray.filter((_, i) => i !== index);
+
+    // Use updateSpec to save the modified spec
+    const result = await updateSpec(newSpec, `Deleted ${name}`);
+
+    // Clear selection if deleted item was selected
+    if (result.success && selectedObject) {
+      const selectedId = selectedObject.item_id || selectedObject.block_id || selectedObject.tool_id;
+      const deletedId = obj.item_id || obj.block_id || obj.tool_id;
+      if (selectedId === deletedId) {
+        setSelectedObject(null);
+        setSelectedObjectType(null);
+      }
+    }
+  }, [spec, updateSpec, selectedObject]);
+
   // Handle approval
   const handleApprove = useCallback(async (modifiedDeltas = null) => {
     if (!currentRunId) return;
@@ -314,6 +344,7 @@ export default function WorkspaceIDEPage() {
             spec={spec}
             selectedObject={selectedObject}
             onSelectObject={handleSelectObject}
+            onDeleteObject={handleDeleteObject}
             onExport={handleExport}
             onBuild={handleBuild}
             isBuildRunning={runStatus === 'running' && currentRunId}
