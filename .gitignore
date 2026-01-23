@@ -23,6 +23,7 @@ share/python-wheels/
 MANIFEST
 
 # Virtual Environments
+.venv/
 venv/
 env/
 ENV/
@@ -42,6 +43,7 @@ backend/venv/
 .env
 .env.local
 .env.*.local
+!.env.example
 
 # Logs
 *.log
@@ -81,6 +83,7 @@ yarn.lock
 htmlcov/
 .tox/
 .nox/
+backend/agents/test/
 
 # Jupyter Notebook
 .ipynb_checkpoints
@@ -100,3 +103,12 @@ Desktop.ini
 *_key.txt
 secrets/
 credentials/
+
+# Internal documentation (keep local only)
+TEXTURE_GENERATION_WORKFLOW.md
+IMPLEMENTATION_SUMMARY.md
+WORKFLOW_DESIGN.md
+AGENT_RESTRUCTURE_STATUS.md
+ALL_TASKS_COMPLETE.md
+AGENT_RESTRUCTURE_PLAN.md
+RESTRUCTURE_COMPLETE.md
