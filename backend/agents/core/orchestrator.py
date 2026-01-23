@@ -21,6 +21,7 @@ from agents.schemas import (
     ModSpec,
     SpecDelta,
     ItemSpec,
+    ItemType,
     BlockSpec,
     ToolSpec,
     Rarity,
@@ -441,6 +442,10 @@ class Orchestrator:
 - Any properties mentioned (rarity, abilities, etc.)
 - Inferred creative tab for each
 - Suggested mod name
+- Decide impl_type for items: ITEM_MAINCLASS by default, ITEM_NEWCLASS when custom use/useOnBlock/useOnEntity behavior is described.
+- When ITEM_NEWCLASS is needed, emit full Java method bodies for use_method/use_on_block_method/use_on_entity_method (include @Override, signature, ActionResult return).
+- Capture food/tool behavior: is_food + nutrition/saturation_modifier, is_sword + sword_attack_damage/sword_attack_speed, is_pickaxe + pickaxe_attack_damage/pickaxe_attack_speed.
+- Leave unused method fields as empty strings.
 
 IMPORTANT: If the user asks for multiple items (e.g., "a sword and shield", "ruby ore and ruby ingot"),
 return ALL of them in the items list. Be generous in interpretation. If unclear, make reasonable assumptions.
@@ -468,6 +473,19 @@ return ALL of them in the items list. Be generous in interpretation. If unclear,
                     "creative_tab": "MISC",
                     "special_ability": None,
                     "texture_description": None,
+                    "impl_type": "ITEM_MAINCLASS",
+                    "use_method": "",
+                    "use_on_block_method": "",
+                    "use_on_entity_method": "",
+                    "is_food": False,
+                    "nutrition": None,
+                    "saturation_modifier": None,
+                    "is_sword": False,
+                    "sword_attack_damage": None,
+                    "sword_attack_speed": None,
+                    "is_pickaxe": False,
+                    "pickaxe_attack_damage": None,
+                    "pickaxe_attack_speed": None,
                     "ambiguous_rarity": False,
                     "tool_type": None
                 }],
@@ -507,6 +525,7 @@ return ALL of them in the items list. Be generous in interpretation. If unclear,
 - What property to change (if modifying)
 - What value to set (if modifying)
 - What to add (if adding new item/block/tool)
+- For new items, include impl_type (ITEM_MAINCLASS/ITEM_NEWCLASS) and method bodies for use/useOnBlock/useOnEntity when custom behavior is requested, plus food/tool flags with matching stats.
 
 IMPORTANT: If the user requests MULTIPLE additions or deletions (e.g., "add a sword and a shield", "delete the ruby and the emerald"),
 return MULTIPLE operations in the operations list - one for each item.
@@ -519,6 +538,9 @@ For ADD operations, you MUST fill in the new_item field with:
 - creative_tab: Appropriate tab
 - special_ability: Any mentioned abilities
 - texture_description: How it should look
+- impl_type: ITEM_MAINCLASS by default, ITEM_NEWCLASS when the request needs custom behavior
+- use_method/use_on_block_method/use_on_entity_method: Full Java methods (with @Override + ActionResult) when impl_type is ITEM_NEWCLASS; otherwise empty strings
+- is_food + nutrition/saturation_modifier when edible; is_sword/is_pickaxe with attack stats when the item should behave like those tools
 
 For REMOVE operations, you MUST fill in:
 - target: The name or description of the item to remove (e.g., "ruby sword", "first item")
@@ -650,13 +672,103 @@ Examples:
 
     def _create_item_spec(self, parsed: Dict[str, Any]) -> ItemSpec:
         """Create ItemSpec from parsed intent"""
+        def _to_bool(val: Any) -> bool:
+            if isinstance(val, bool):
+                return val
+            if isinstance(val, str):
+                return val.strip().lower() in ("true", "yes", "y", "1", "on")
+            return False
+
+        def _clean_method_body(val: Any) -> Optional[str]:
+            if not isinstance(val, str):
+                return None
+            cleaned = val.strip()
+            return cleaned or None
+
+        def _has_text(val: Optional[str]) -> bool:
+            return bool(val and val.strip())
+
+        def _default_use_stub() -> str:
+            return (
+                "@Override\n"
+                "public ActionResult use(World world, PlayerEntity player, Hand hand){\n"
+                "    if (!world.isClient()) {\n"
+                "        // TODO: implement custom behavior\n"
+                "        return ActionResult.SUCCESS;\n"
+                "    }\n"
+                "    return super.use(world, player, hand);\n"
+                "}\n"
+            )
+
+        raw_impl_type = parsed.get("impl_type") or parsed.get("implementation_type") or parsed.get("item_type") or "ITEM_MAINCLASS"
+        try:
+            impl_type = ItemType(raw_impl_type)
+        except ValueError:
+            impl_type = ItemType.ITEM_MAINCLASS
+
+        use_method = _clean_method_body(parsed.get("use_method") or parsed.get("use"))
+        use_on_block_method = _clean_method_body(parsed.get("use_on_block_method") or parsed.get("useOnBlock"))
+        use_on_entity_method = _clean_method_body(parsed.get("use_on_entity_method") or parsed.get("useOnEntity"))
+
+        has_custom_behavior = any(_has_text(m) for m in [use_method, use_on_block_method, use_on_entity_method])
+        has_special = bool(parsed.get("special_ability"))
+
+        is_food = _to_bool(parsed.get("is_food") or parsed.get("isFood"))
+        nutrition = parsed.get("nutrition") if is_food else None
+        saturation = parsed.get("saturation_modifier") if is_food else None
+        if is_food:
+            nutrition = 5 if nutrition is None else nutrition
+            saturation = 0.6 if saturation is None else saturation
+
+        is_sword = _to_bool(parsed.get("is_sword") or parsed.get("isSword"))
+        sword_attack_damage = parsed.get("sword_attack_damage") if is_sword else None
+        sword_attack_speed = parsed.get("sword_attack_speed") if is_sword else None
+        if is_sword:
+            sword_attack_damage = 3.0 if sword_attack_damage is None else sword_attack_damage
+            sword_attack_speed = -2.4 if sword_attack_speed is None else sword_attack_speed
+
+        is_pickaxe = _to_bool(parsed.get("is_pickaxe") or parsed.get("isPickaxe"))
+        pickaxe_attack_damage = parsed.get("pickaxe_attack_damage") if is_pickaxe else None
+        pickaxe_attack_speed = parsed.get("pickaxe_attack_speed") if is_pickaxe else None
+        if is_pickaxe:
+            pickaxe_attack_damage = 1.0 if pickaxe_attack_damage is None else pickaxe_attack_damage
+            pickaxe_attack_speed = -2.8 if pickaxe_attack_speed is None else pickaxe_attack_speed
+
+        has_functionality = has_custom_behavior or is_food or is_sword or is_pickaxe or has_special
+
+        if impl_type != ItemType.ITEM_SUBCLASS:
+            if has_custom_behavior:
+                impl_type = ItemType.ITEM_NEWCLASS
+            elif impl_type == ItemType.ITEM_NEWCLASS:
+                impl_type = ItemType.ITEM_NEWCLASS
+            elif is_pickaxe or is_sword or is_food:
+                impl_type = ItemType.ITEM_MAINCLASS
+            else:
+                impl_type = ItemType.ITEM_NEWCLASS if has_functionality else ItemType.ITEM_MAINCLASS
+
+        if impl_type == ItemType.ITEM_NEWCLASS and not has_custom_behavior:
+            use_method = _default_use_stub()
+
         return ItemSpec(
             item_name=parsed.get("name", "Custom Item"),
             description=parsed.get("description", "A custom item"),
             rarity=Rarity(parsed.get("rarity", "COMMON")),
             creative_tab=normalize_creative_tab(parsed.get("creative_tab", "MISC"), CreativeTab.MISC),
             special_ability=parsed.get("special_ability"),
-            texture_description=parsed.get("texture_description")
+            texture_description=parsed.get("texture_description"),
+            type=impl_type,
+            use=use_method,
+            useOnBlock=use_on_block_method,
+            useOnEntity=use_on_entity_method,
+            isFood=is_food,
+            nutrition=nutrition,
+            saturationModifier=saturation,
+            isSword=is_sword,
+            swordAttackDamage=sword_attack_damage,
+            swordAttackSpeed=sword_attack_speed,
+            isPickaxe=is_pickaxe,
+            pickaxeAttackDamage=pickaxe_attack_damage,
+            pickaxeAttackSpeed=pickaxe_attack_speed
         )
 
     def _create_block_spec(self, parsed: Dict[str, Any]) -> BlockSpec:
@@ -689,6 +801,19 @@ class ParsedItem(BaseModel):
     creative_tab: str = Field("MISC", description="Creative tab")
     special_ability: Optional[str] = Field(None, description="Special ability if mentioned")
     texture_description: Optional[str] = Field(None, description="How texture should look")
+    impl_type: Optional[str] = Field("ITEM_MAINCLASS", description="ITEM_MAINCLASS, ITEM_SUBCLASS, or ITEM_NEWCLASS")
+    use_method: Optional[str] = Field("", description="Full method body for use override")
+    use_on_block_method: Optional[str] = Field("", description="Full method body for useOnBlock override")
+    use_on_entity_method: Optional[str] = Field("", description="Full method body for useOnEntity override")
+    is_food: Optional[bool] = Field(False, description="True if the item is edible")
+    nutrition: Optional[int] = Field(None, description="Food nutrition (half-shanks)")
+    saturation_modifier: Optional[float] = Field(None, description="Food saturation modifier")
+    is_sword: Optional[bool] = Field(False, description="True if item behaves as a sword")
+    sword_attack_damage: Optional[float] = Field(None, description="Attack damage bonus for sword behavior")
+    sword_attack_speed: Optional[float] = Field(None, description="Attack speed for sword behavior")
+    is_pickaxe: Optional[bool] = Field(False, description="True if item behaves as a pickaxe")
+    pickaxe_attack_damage: Optional[float] = Field(None, description="Attack damage bonus for pickaxe behavior")
+    pickaxe_attack_speed: Optional[float] = Field(None, description="Attack speed for pickaxe behavior")
     ambiguous_rarity: bool = Field(False, description="True if rarity is unclear")
     tool_type: Optional[str] = Field(None, description="PICKAXE, AXE, SWORD, etc.")
 

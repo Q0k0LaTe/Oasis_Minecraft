@@ -9,7 +9,7 @@ Key principle: Specs can be incomplete or ambiguous.
 The Compiler's job is to fill in defaults and resolve ambiguity.
 """
 from typing import List, Optional, Dict, Any
-from pydantic import BaseModel, Field, ConfigDict, field_validator
+from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 from enum import Enum
 
 
@@ -34,6 +34,13 @@ class CreativeTab(str, Enum):
     INGREDIENTS = "INGREDIENTS"
     SPAWN_EGGS = "SPAWN_EGGS"
     MISC = "MISC"
+
+
+class ItemType(str, Enum):
+    """Item implementation strategy"""
+    ITEM_MAINCLASS = "ITEM_MAINCLASS"
+    ITEM_SUBCLASS = "ITEM_SUBCLASS"
+    ITEM_NEWCLASS = "ITEM_NEWCLASS"
 
 
 def normalize_creative_tab(value: Any, default: "CreativeTab" = None) -> "CreativeTab":
@@ -97,12 +104,29 @@ class ItemSpec(BaseModel):
     item_id: Optional[str] = Field(None, description="Registry ID (e.g., 'ruby_gem'). Compiler will generate if missing.")
     description: str = Field(..., description="Lore/purpose of the item")
 
+    # Implementation strategy and custom behaviors
+    type: ItemType = Field(ItemType.ITEM_MAINCLASS, description="ITEM_MAINCLASS, ITEM_SUBCLASS, or ITEM_NEWCLASS")
+    use: Optional[str] = Field(None, description="Full method body for use(World, PlayerEntity, Hand)")
+    useOnBlock: Optional[str] = Field(None, description="Full method body for useOnBlock(ItemUsageContext)")
+    useOnEntity: Optional[str] = Field(None, description="Full method body for useOnEntity(ItemStack, PlayerEntity, LivingEntity, Hand)")
+
     # Properties (can be partial)
     max_stack_size: Optional[int] = Field(64, ge=1, le=64)
     rarity: Optional[Rarity] = Field(Rarity.COMMON)
     fireproof: Optional[bool] = Field(False)
     creative_tab: Optional[CreativeTab] = Field(CreativeTab.MISC)
     special_ability: Optional[str] = Field(None, description="What the item does when used")
+
+    # Food and tool flags/stats
+    isFood: bool = Field(False, description="True if the item acts as food")
+    nutrition: Optional[int] = Field(None, ge=0, description="Hunger restored (half-shanks)")
+    saturationModifier: Optional[float] = Field(None, ge=0.0, description="Saturation multiplier applied to nutrition")
+    isSword: bool = Field(False, description="True if the item behaves as a sword")
+    swordAttackDamage: Optional[float] = Field(None, description="Attack damage bonus for sword behavior")
+    swordAttackSpeed: Optional[float] = Field(None, description="Attack speed modifier for sword behavior")
+    isPickaxe: bool = Field(False, description="True if the item behaves as a pickaxe")
+    pickaxeAttackDamage: Optional[float] = Field(None, description="Attack damage bonus for pickaxe behavior")
+    pickaxeAttackSpeed: Optional[float] = Field(None, description="Attack speed modifier for pickaxe behavior")
 
     # Texture hints (optional - Compiler will use AI if missing)
     texture_description: Optional[str] = Field(None, description="How the texture should look")
@@ -112,6 +136,58 @@ class ItemSpec(BaseModel):
     @classmethod
     def _coerce_creative_tab(cls, v):
         return normalize_creative_tab(v)
+
+    @model_validator(mode="after")
+    def _validate_behavior_consistency(self):
+        """Ensure behavior flags align with provided stats and method bodies."""
+        # Food validation
+        if self.isFood:
+            if self.nutrition is None or self.saturationModifier is None:
+                raise ValueError("isFood is True but nutrition/saturationModifier are missing")
+        else:
+            if self.nutrition is not None or self.saturationModifier is not None:
+                raise ValueError("Food stats provided but isFood is False")
+
+        # Sword validation
+        if self.isSword:
+            if self.swordAttackDamage is None or self.swordAttackSpeed is None:
+                raise ValueError("isSword is True but swordAttackDamage/swordAttackSpeed are missing")
+        else:
+            if self.swordAttackDamage is not None or self.swordAttackSpeed is not None:
+                raise ValueError("Sword stats provided but isSword is False")
+
+        # Pickaxe validation
+        if self.isPickaxe:
+            if self.pickaxeAttackDamage is None or self.pickaxeAttackSpeed is None:
+                raise ValueError("isPickaxe is True but pickaxeAttackDamage/pickaxeAttackSpeed are missing")
+        else:
+            if self.pickaxeAttackDamage is not None or self.pickaxeAttackSpeed is not None:
+                raise ValueError("Pickaxe stats provided but isPickaxe is False")
+
+        # Custom class validation
+        if self.type == ItemType.ITEM_NEWCLASS:
+            if not self._has_method_body(self.use) and not self._has_method_body(self.useOnBlock) and not self._has_method_body(self.useOnEntity):
+                raise ValueError("ITEM_NEWCLASS requires at least one method body (use/useOnBlock/useOnEntity)")
+
+        # Validate provided method bodies look complete
+        for field_name, body in [
+            ("use", self.use),
+            ("useOnBlock", self.useOnBlock),
+            ("useOnEntity", self.useOnEntity),
+        ]:
+            if self._has_method_body(body) and not self._looks_like_method(body):
+                raise ValueError(f"{field_name} must be a complete method body (include signature and braces)")
+
+        return self
+
+    @staticmethod
+    def _has_method_body(value: Optional[str]) -> bool:
+        return value is not None and value.strip() != ""
+
+    @staticmethod
+    def _looks_like_method(value: str) -> bool:
+        stripped = value.strip()
+        return "(" in stripped and "{" in stripped and ("public" in stripped or "@Override" in stripped)
 
 
 class BlockSpec(BaseModel):
@@ -242,6 +318,7 @@ __all__ = [
     "ModSpec",
     "SpecDelta",
     "ItemSpec",
+    "ItemType",
     "BlockSpec",
     "ToolSpec",
     "Rarity",
