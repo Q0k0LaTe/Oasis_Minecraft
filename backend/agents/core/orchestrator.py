@@ -204,12 +204,69 @@ class Orchestrator:
         import logging
         logger = logging.getLogger(__name__)
 
-        # Determine what user wants to change
-        intent = self._parse_modification_intent(user_prompt, current_spec)
-        logger.info(f"[Orchestrator] Parsed intent: {intent}")
-
+        prompt_lower = user_prompt.lower()
         deltas = []
         clarifying_questions = []
+
+        # Check if this is an ADD operation - use _parse_item_intent for reliable multi-item support
+        is_add_operation = any(word in prompt_lower for word in ["add", "create", "make", "new"])
+        is_remove_operation = any(word in prompt_lower for word in ["delete", "remove"])
+
+        if is_add_operation and not is_remove_operation:
+            # Use _parse_item_intent for add operations (same as initial prompts)
+            logger.info(f"[Orchestrator] Detected ADD operation, using _parse_item_intent")
+            parsed = self._parse_item_intent(user_prompt)
+            items_list = parsed.get("items", [])
+
+            item_idx = len(current_spec.items)
+            block_idx = len(current_spec.blocks)
+            tool_idx = len(current_spec.tools)
+
+            for parsed_item in items_list:
+                item_type = parsed_item.get("type", "item")
+                item_name = parsed_item.get("name", "Unknown")
+
+                if item_type == "item":
+                    item_spec = self._create_item_spec(parsed_item)
+                    deltas.append(SpecDelta(
+                        operation="add",
+                        path=f"items[{item_idx}]",
+                        value=item_spec.dict(),
+                        reason=self._format_reason(user_prompt)
+                    ))
+                    item_idx += 1
+                elif item_type == "block":
+                    block_spec = self._create_block_spec(parsed_item)
+                    deltas.append(SpecDelta(
+                        operation="add",
+                        path=f"blocks[{block_idx}]",
+                        value=block_spec.dict(),
+                        reason=self._format_reason(user_prompt)
+                    ))
+                    block_idx += 1
+                elif item_type == "tool":
+                    tool_spec = self._create_tool_spec(parsed_item)
+                    deltas.append(SpecDelta(
+                        operation="add",
+                        path=f"tools[{tool_idx}]",
+                        value=tool_spec.dict(),
+                        reason=self._format_reason(user_prompt)
+                    ))
+                    tool_idx += 1
+
+            reasoning = f"Adding {len(items_list)} item(s)" if items_list else "No items to add"
+            logger.info(f"[Orchestrator] Generated {len(deltas)} add deltas")
+
+            return OrchestratorResponse(
+                deltas=deltas,
+                clarifying_questions=clarifying_questions,
+                reasoning=reasoning,
+                requires_user_input=False
+            )
+
+        # For modify/remove operations, use _parse_modification_intent
+        intent = self._parse_modification_intent(user_prompt, current_spec)
+        logger.info(f"[Orchestrator] Parsed intent: {intent}")
 
         # Get all operations (support both single and batch)
         ops = intent.get("operations", [])
@@ -218,11 +275,6 @@ class Orchestrator:
             ops = [intent]
 
         logger.info(f"[Orchestrator] Processing {len(ops)} operations")
-
-        # Track indices for add operations (to handle multiple adds in same batch)
-        item_add_count = 0
-        block_add_count = 0
-        tool_add_count = 0
 
         for op in ops:
             operation = op.get("operation")
@@ -242,54 +294,6 @@ class Orchestrator:
                     ))
                 else:
                     logger.warning(f"[Orchestrator] Invalid modify_property: path={path}, value={value}")
-
-            elif operation == "add_item":
-                new_item_data = op.get("new_item_data") or op.get("new_item") or {}
-                if isinstance(new_item_data, dict):
-                    item_dict = new_item_data
-                else:
-                    item_dict = new_item_data.dict() if hasattr(new_item_data, 'dict') else {}
-                logger.info(f"[Orchestrator] Adding item with data: {item_dict}")
-                new_item = self._create_item_spec(item_dict)
-                deltas.append(SpecDelta(
-                    operation="add",
-                    path=f"items[{len(current_spec.items) + item_add_count}]",
-                    value=new_item.dict(),
-                    reason=self._format_reason(user_prompt)
-                ))
-                item_add_count += 1
-
-            elif operation == "add_block":
-                new_block_data = op.get("new_item_data") or op.get("new_item") or {}
-                if isinstance(new_block_data, dict):
-                    block_dict = new_block_data
-                else:
-                    block_dict = new_block_data.dict() if hasattr(new_block_data, 'dict') else {}
-                logger.info(f"[Orchestrator] Adding block with data: {block_dict}")
-                new_block = self._create_block_spec(block_dict)
-                deltas.append(SpecDelta(
-                    operation="add",
-                    path=f"blocks[{len(current_spec.blocks) + block_add_count}]",
-                    value=new_block.dict(),
-                    reason=self._format_reason(user_prompt)
-                ))
-                block_add_count += 1
-
-            elif operation == "add_tool":
-                new_tool_data = op.get("new_item_data") or op.get("new_item") or {}
-                if isinstance(new_tool_data, dict):
-                    tool_dict = new_tool_data
-                else:
-                    tool_dict = new_tool_data.dict() if hasattr(new_tool_data, 'dict') else {}
-                logger.info(f"[Orchestrator] Adding tool with data: {tool_dict}")
-                new_tool = self._create_tool_spec(tool_dict)
-                deltas.append(SpecDelta(
-                    operation="add",
-                    path=f"tools[{len(current_spec.tools) + tool_add_count}]",
-                    value=new_tool.dict(),
-                    reason=self._format_reason(user_prompt)
-                ))
-                tool_add_count += 1
 
             elif operation == "remove_item":
                 target_idx = self._resolve_target_index(op, current_spec.items, "item")
