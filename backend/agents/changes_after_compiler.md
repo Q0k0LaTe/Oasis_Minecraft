@@ -17,6 +17,11 @@ to keep the pipeline consistent and deterministic.
   - `isFood`, `nutrition`, `saturationModifier`
   - `isSword`, `swordAttackDamage`, `swordAttackSpeed`
   - `isPickaxe`, `pickaxeAttackDamage`, `pickaxeAttackSpeed`
+- Added material metadata fields in `IRItem`:
+  - Armor material stats: `armorMaterial*Defense`, `armorMaterialDurability`,
+    `armorMaterialEnchantmentValue`, `armorMaterialToughness`, `armorMaterialKnockbackResistance`
+  - Tool material stats: `toolMaterialDurability`, `toolMaterialSpeed`,
+    `toolMaterialAttackDamageBonus`, `toolMaterialEnchantmentValue`
 - `IRItem.use`, `IRItem.useOnBlock`, `IRItem.useOnEntity` are now part of IR.
   - Each field must contain a complete overridden method body.
   - Strings are injected directly into the generated class.
@@ -71,6 +76,10 @@ to keep the pipeline consistent and deterministic.
   - Generates tag files for tool behavior:
     - `data/minecraft/tags/item/swords.json`
     - `data/minecraft/tags/item/pickaxes.json`
+  - Generates per-material repair tags for items marked as `isMaterial`:
+    - `data/<mod_id>/tags/item/<material_item>_repair.json`
+  - `_extract_material_parameters` now returns a tuple of material stats
+    (defaults first, then overrides from the matched material item).
 - `_generate_new_item_class`:
   - Creates a Java class in the specified `java_package`.
   - Injects `use`, `useOnBlock`, and `useOnEntity` as-is if provided.
@@ -82,14 +91,22 @@ to keep the pipeline consistent and deterministic.
   - Must populate the method strings for `ITEM_NEWCLASS`.
   - Should set tool/food flags and related stats when the item is meant to act
     as food or a tool (sword/pickaxe).
+  - Should set `isMaterial` and the material stat fields when the item is
+    intended to serve as a tool/armor material.
+  - Should ensure `swordMaterial` / `pickaxeMaterial` reference a valid material item id 
+    (in the form of "modid:itemid").
 - SpecManager:
   - Should validate and persist `type` + method bodies in the spec.
   - Should validate `isFood`/`isSword`/`isPickaxe` are consistent with stats.
+  - Should validate material stat completeness when `isMaterial` is true.
+  - Should validate that material ids referenced by tools exist in the spec.
 - Compiler:
   - Must carry `type` + method strings into `IRItem`.
   - Should enforce that `ITEM_NEWCLASS` has at least one method body, unless the
     intent is to mirror `ITEM_MAINCLASS` behavior (all three empty).
   - Must carry new tool/food flags and stats into the IR.
+  - Must carry new armor/tool material stats into the IR for items that act as materials.
+  - Should normalize missing material fields to defaults used by the generator.
 
 ## Validation guidance
 - Prefer failing fast if `ITEM_NEWCLASS` has empty `use`, `useOnBlock`, and `useOnEntity`,

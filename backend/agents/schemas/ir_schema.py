@@ -71,11 +71,30 @@ class IRItem(BaseModel):
     nutrition: Optional[int] = Field(None, description="The number of half chicken thighs gained")
     saturationModifier: Optional[float] = Field(None, description="The number of saturation value get divided by 2 * nutrition")
     isSword: Optional[bool] = Field(None, description="True if the item is a sword")
+    swordMaterial: Optional[str] = Field(None, description="The item id of the material of the new sword")
     swordAttackDamage: Optional[float] = Field(None, description="The attack damage of the sword")
     swordAttackSpeed: Optional[float] = Field(None, description="The attack speed of the sword")
     isPickaxe: Optional[bool] = Field(None, description="True if the item is a pickaxe")
+    pickaxeMaterial: Optional[str] = Field(None, description="The item id of the material of the new pickaxe")
     pickaxeAttackDamage: Optional[float] = Field(None, description="The attack damage of the pickaxe")
     pickaxeAttackSpeed: Optional[float] = Field(None, description="The attack speed of the pickaxe")
+    isMaterial: Optional[bool] = Field(None, description="True if the item is a material of swords, tools, and/or armors")
+    armorMaterialBootsDefense: Optional[int] = Field(None, description="Armor boots defense value for this material")
+    armorMaterialLeggingsDefense: Optional[int] = Field(None, description="Armor leggings defense value for this material")
+    armorMaterialChestplateDefense: Optional[int] = Field(None, description="Armor chestplate defense value for this material")
+    armorMaterialHelmetDefense: Optional[int] = Field(None, description="Armor helmet defense value for this material")
+    armorMaterialBodyDefense: Optional[int] = Field(None, description="Armor defense value for this material if equipped on wolf")
+    armorMaterialDurability: Optional[int] = Field(None, description="Armor material durability value")
+    armorMaterialEnchantmentValue: Optional[int] = Field(None, description="Armor material enchantment value")
+    armorMaterialToughness: Optional[float] = Field(None, description="Armor material toughness value")
+    armorMaterialKnockbackResistance: Optional[float] = Field(None, description="Armor material knockback resistance value")
+    toolMaterialDurability: Optional[int] = Field(None, description="Tool material durability value")
+    toolMaterialSpeed: Optional[float] = Field(None, description="Tool material speed value")
+    toolMaterialAttackDamageBonus: Optional[float] = Field(None, description="Tool material attack damage bonus")
+    toolMaterialEnchantmentValue: Optional[int] = Field(None, description="Tool material enchantment value")
+    
+    # equipSound is currently diamond armor's sound as default; may add later
+
 
     # for ITEM_SUBCLASS:
 
