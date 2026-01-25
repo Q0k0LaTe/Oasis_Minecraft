@@ -93,7 +93,7 @@ def generate_java_code(
     # Generate ModItemGroups class
     item_groups_class_path = _generate_mod_item_groups_class(java_path, package_name, mod_id, main_class_name, items, blocks)
 
-    _generate_tags_json(mod_dir, items)
+    _generate_tags_json(mod_dir, mod_id, items)
 
     return {
         "status": "success",
@@ -142,11 +142,65 @@ def _generate_mod_items_class(
         if isSword:
             swordAttackDamage = item.get("swordAttackDamage") or 3.0
             swordAttackSpeed = item.get("swordAttackSpeed") or -2.4
-            settings += f".sword(ToolMaterial.DIAMOND, {swordAttackDamage}F, {swordAttackSpeed}F)"
+            materialParas = _extract_material_parameters(item.get("swordMaterial"), items)
+            (
+                armor_material_boots_defense,
+                armor_material_leggings_defense,
+                armor_material_chestplate_defense,
+                armor_material_helmet_defense,
+                armor_material_body_defense,
+                armor_material_durability,
+                armor_material_enchantment_value,
+                armor_material_toughness,
+                armor_material_knockback_resistance,
+                tool_material_durability,
+                tool_material_speed,
+                tool_material_attack_damage_bonus,
+                tool_material_enchantment_value
+            ) = materialParas
+            sword_material_id = (item.get("swordMaterial") or "").split(":")[-1]
+            toolMaterial = (
+                "new ToolMaterial("
+                "BlockTags.INCORRECT_FOR_DIAMOND_TOOL, "
+                f"{tool_material_durability}, "
+                f"{tool_material_speed}F, "
+                f"{tool_material_attack_damage_bonus}F, "
+                f"{tool_material_enchantment_value}, "
+                f"TagKey.of(RegistryKeys.ITEM, Identifier.of({main_class_name}.MOD_ID, \"{sword_material_id}_repair\"))"
+                ")"
+            )
+            settings += f".sword({toolMaterial}, {swordAttackDamage}F, {swordAttackSpeed}F)"
         if isPickaxe:
             pickaxeAttackDamage = item.get("pickaxeAttackDamage") or 1.0
             pickaxeAttackSpeed = item.get("pickaxeAttackSpeed") or -2.8
-            settings += f".pickaxe(ToolMaterial.DIAMOND, {pickaxeAttackDamage}F, {pickaxeAttackSpeed}F)"
+            materialParas = _extract_material_parameters(item.get("pickaxeMaterial"), items)
+            (
+                armor_material_boots_defense,
+                armor_material_leggings_defense,
+                armor_material_chestplate_defense,
+                armor_material_helmet_defense,
+                armor_material_body_defense,
+                armor_material_durability,
+                armor_material_enchantment_value,
+                armor_material_toughness,
+                armor_material_knockback_resistance,
+                tool_material_durability,
+                tool_material_speed,
+                tool_material_attack_damage_bonus,
+                tool_material_enchantment_value
+            ) = materialParas
+            pickaxe_material_id = (item.get("pickaxeMaterial") or "").split(":")[-1]
+            toolMaterial = (
+                "new ToolMaterial("
+                "BlockTags.INCORRECT_FOR_DIAMOND_TOOL, "
+                f"{tool_material_durability}, "
+                f"{tool_material_speed}F, "
+                f"{tool_material_attack_damage_bonus}F, "
+                f"{tool_material_enchantment_value}, "
+                f"TagKey.of(RegistryKeys.ITEM, Identifier.of({main_class_name}.MOD_ID, \"{pickaxe_material_id}_repair\"))"
+                ")"
+            )
+            settings += f".pickaxe({toolMaterial}, {pickaxeAttackDamage}F, {pickaxeAttackSpeed}F)"
 
         if item_type == "ITEM_NEWCLASS":
             _generate_new_item_class(java_path, package_name, main_class_name, item)
@@ -187,6 +241,55 @@ def _generate_mod_items_class(
     items_path.parent.mkdir(parents=True, exist_ok=True)
     items_path.write_text(items_class)
     return items_path
+
+def _extract_material_parameters(item_id: str, items: List[Dict[str, Any]]):
+    armor_material_boots_defense = 3
+    armor_material_leggings_defense = 6
+    armor_material_chestplate_defense = 8
+    armor_material_helmet_defense = 3
+    armor_material_body_defense = 11
+    armor_material_durability = 33
+    armor_material_enchantment_value = 10
+    armor_material_toughness = 2.0
+    armor_material_knockback_resistance = 0.0
+    tool_material_durability = 1561
+    tool_material_speed = 8.0
+    tool_material_attack_damage_bonus = 3.0
+    tool_material_enchantment_value = 10
+
+    for item in items:
+        if item.get("item_id") != item_id:
+            continue
+        armor_material_boots_defense = item.get("armorMaterialBootsDefense") or armor_material_boots_defense
+        armor_material_leggings_defense = item.get("armorMaterialLeggingsDefense") or armor_material_leggings_defense
+        armor_material_chestplate_defense = item.get("armorMaterialChestplateDefense") or armor_material_chestplate_defense
+        armor_material_helmet_defense = item.get("armorMaterialHelmetDefense") or armor_material_helmet_defense
+        armor_material_body_defense = item.get("armorMaterialBodyDefense") or armor_material_body_defense
+        armor_material_durability = item.get("armorMaterialDurability") or armor_material_durability
+        armor_material_enchantment_value = item.get("armorMaterialEnchantmentValue") or armor_material_enchantment_value
+        armor_material_toughness = item.get("armorMaterialToughness") or armor_material_toughness
+        armor_material_knockback_resistance = item.get("armorMaterialKnockbackResistance") or armor_material_knockback_resistance
+        tool_material_durability = item.get("toolMaterialDurability") or tool_material_durability
+        tool_material_speed = item.get("toolMaterialSpeed") or tool_material_speed
+        tool_material_attack_damage_bonus = item.get("toolMaterialAttackDamageBonus") or tool_material_attack_damage_bonus
+        tool_material_enchantment_value = item.get("toolMaterialEnchantmentValue") or tool_material_enchantment_value
+        break
+
+    return (
+        armor_material_boots_defense,
+        armor_material_leggings_defense,
+        armor_material_chestplate_defense,
+        armor_material_helmet_defense,
+        armor_material_body_defense,
+        armor_material_durability,
+        armor_material_enchantment_value,
+        armor_material_toughness,
+        armor_material_knockback_resistance,
+        tool_material_durability,
+        tool_material_speed,
+        tool_material_attack_damage_bonus,
+        tool_material_enchantment_value
+    )
 
 
 def _generate_new_item_class(
@@ -394,7 +497,7 @@ def _generate_mod_item_groups_class(
     return item_groups_path
 
 
-def _generate_tags_json(mod_dir: Path, items: List[Dict[str, Any]]) -> Path:
+def _generate_tags_json(mod_dir: Path, mod_id: str, items: List[Dict[str, Any]]) -> Path:
     sword_values = []
     pickaxe_values = []
     for item in items:
@@ -408,6 +511,15 @@ def _generate_tags_json(mod_dir: Path, items: List[Dict[str, Any]]) -> Path:
             item_id = item.get("item_id")
             if item_id:
                 pickaxe_values.append(item_id)
+        isMaterial = item.get("isMaterial") or False
+        if isMaterial:
+            item_id = item.get("item_id")
+            if item_id:
+                item_path = item_id.split(":")[-1]
+                repair_json = json.dumps({"values": [item_id]}, indent=2)
+                repair_path = mod_dir / "src" / "main" / "resources" / "data" / mod_id / "tags" / "item" / f"{item_path}_repair.json"
+                repair_path.parent.mkdir(parents=True, exist_ok=True)
+                repair_path.write_text(repair_json)
 
     sword_json = json.dumps({"values": sword_values}, indent=2)
     sword_path = mod_dir / "src" / "main" / "resources" / "data" / "minecraft" / "tags" / "item" / "swords.json"
